@@ -7,3 +7,14 @@ config KUNWIND
 	  the Linux kernel image, choose Y.
 
 	  If unsure, say N.
+
+config KUNWIND_DEBUG
+       depends on KUNWIND
+       tristate "Kernel unwind debugging"
+       	help
+	  Test device to experiment with user-space unwinding from the kernel.
+
+	  To compile as a set of modules, choose M here. To compile into
+	  the Linux kernel image, choose Y.
+
+	  If unsure, say N.
