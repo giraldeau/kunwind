@@ -41,6 +41,7 @@ module_init(kunwind_debug_init);
 static void __exit kunwind_debug_exit(void)
 {
 	printk(KERN_INFO "kunwind_debug exit\n");
+	proc_remove(proc_entry);
 }
 
 module_exit(kunwind_debug_exit);
