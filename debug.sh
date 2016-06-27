@@ -25,22 +25,22 @@ KERNEL_IMAGE_PATH=$1
 
 set -x
 
-gcc main.c
+make -C ./test
 
 sudo mount linux.img mnt/
 mkdir -p mnt/opt
 sudo chown $USER mnt/opt
-cp a.out mnt/opt
+cp test/test mnt/opt
 cp -p ./start.sh mnt/opt
 sudo umount linux.img
 
 qemu-system-x86_64 \
-    -hda linux.img \
+    -drive file=linux.img,index=0,media=disk,format=raw \
     -no-reboot \
     -nographic \
     -kernel $KERNEL_IMAGE_PATH \
     $QEMU_VIRTFS_ARGS \
-    -append "root=/dev/sda init=/opt/start.sh console=ttyS0 panic=1" \
+    -append "root=/dev/sda rw init=/opt/start.sh console=ttyS0 panic=1" \
     -s
 
 # starts gdb server on localhost:1234
