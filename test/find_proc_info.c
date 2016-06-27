@@ -47,6 +47,7 @@ static int extract_eh_frame_info(struct dl_phdr_info *info,
 			extract_data->list_tail = elem;
 		extract_data->nr_eh_frames = 1;
 	} else {
+		extract_data->list_tail->next = elem;
 		extract_data->list_tail = elem;
 		extract_data->nr_eh_frames++;
 	}
