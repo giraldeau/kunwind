@@ -4,26 +4,45 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/errno.h>
 
-#define PROC_NAME "kunwind_debug"
+#include <proc_info.h>
 
-static ssize_t device_read(struct file *fp, char __user *buf, size_t size, loff_t *off)
+#define PROC_FILENAME "kunwind_debug"
+
+static proc_info_t *pinfo = NULL;
+
+static ssize_t kunwind_debug_write(struct file *fp, const char __user *buf,
+				   size_t size, loff_t *off)
 {
-	static const char *str = "Bonjour.";
-	printk(KERN_INFO "%s %p %ld\n", str, buf, size);
-	if (!size)
-		return 0;
-	size = max(size, strlen(str));
-	if (copy_to_user(buf, str, size)) {
+	pinfo = krealloc(pinfo, size, GFP_KERNEL);
+	if (!pinfo)
+		return -ENOMEM;
+
+	if (copy_from_user(pinfo, buf, size)) {
+		kfree(pinfo);
+		pinfo = NULL;
 		return -EFAULT;
 	}
+
+	printk("pinfo is %p\n", pinfo);
+
 	return size;
 }
 
+static ssize_t kunwind_debug_read(struct file *fp, char __user *buf,
+				  size_t size, loff_t *off)
+{
+	// Unwind userspace using last given pinfo
+
+	return -ENOSYS; // Not implemented yet
+}
+
 static struct file_operations fops = {
-	.read = device_read,
+	.write = kunwind_debug_write,
+	.read = kunwind_debug_read,
 };
 
 static struct proc_dir_entry *proc_entry;
@@ -31,8 +50,7 @@ static struct proc_dir_entry *proc_entry;
 static int __init kunwind_debug_init(void)
 {
 	printk(KERN_INFO "kunwind_debug init\n");
-	proc_entry = proc_create(PROC_NAME, 0666, NULL, &fops);
-	printk("%p\n", proc_entry);
+	proc_entry = proc_create(PROC_FILENAME, 0666, NULL, &fops);
 	return 0;
 }
 
@@ -49,4 +67,3 @@ module_exit(kunwind_debug_exit);
 MODULE_LICENSE("GPL and additional rights");
 MODULE_AUTHOR("Jean-Alexandre Barszcz <jalex_b@hotmail.com>");
 MODULE_DESCRIPTION("Kernel Unwind Debugging");
-
