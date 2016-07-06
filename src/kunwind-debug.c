@@ -10,6 +10,8 @@
 
 #include <proc_info.h>
 
+#include "kunwind-eh-frame.h"
+
 #define PROC_FILENAME "kunwind_debug"
 
 static proc_info_t *pinfo = NULL;
@@ -28,6 +30,13 @@ static ssize_t kunwind_debug_write(struct file *fp, const char __user *buf,
 	}
 
 	printk("pinfo is %p\n", pinfo);
+
+	int i;
+	for (i = 0; i < pinfo->nr_eh_frames; ++i) {
+		struct eh_frame_info *einfo = &pinfo->eh_frames[i];
+		struct eh_frame_hdr hdr;
+		int ret = parse_eh_frame_hdr_section(einfo->start, &hdr);
+	}
 
 	return size;
 }
