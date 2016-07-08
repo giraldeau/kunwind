@@ -4,7 +4,9 @@ obj-$(CONFIG_KUNWIND) := kunwind.o
 kunwind-y := src/kunwind.o
 
 obj-$(CONFIG_KUNWIND_DEBUG) += kunwind-debug.o
-kunwind-debug-y := src/kunwind-debug.o src/kunwind-eh-frame.o
+kunwind-debug-y := src/kunwind-debug.o \
+	src/kunwind-eh-frame.o \
+	src/unwind.o
 
 src/kunwind-eh-frame.o : src/kunwind-eh-frame.h src/kunwind-bug.h
 

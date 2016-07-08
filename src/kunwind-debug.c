@@ -11,6 +11,7 @@
 #include <proc_info.h>
 
 #include "kunwind-eh-frame.h"
+#include "unwind/unwind.h"
 
 #define PROC_FILENAME "kunwind_debug"
 
@@ -49,9 +50,19 @@ static ssize_t kunwind_debug_read(struct file *fp, char __user *buf,
 	return -ENOSYS; // Not implemented yet
 }
 
+static long kunwind_debug_ioctl(struct file *fp,
+		unsigned int cmd, unsigned long arg)
+{
+
+	int ret = unwind(NULL, 1);
+	(void) ret;
+	return -ENOSYS;
+}
+
 static struct file_operations fops = {
 	.write = kunwind_debug_write,
 	.read = kunwind_debug_read,
+	.unlocked_ioctl = kunwind_debug_ioctl,
 };
 
 static struct proc_dir_entry *proc_entry;

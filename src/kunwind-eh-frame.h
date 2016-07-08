@@ -39,7 +39,7 @@
 				     // http://www.hexblog.com/wp-content/uploads/2012/06/Recon-2012-Skochinsky-Compiler-Internals.pdf#42
 
 #define DW_EH_PE_FORMAT(encoding)	((encoding) & 0x0f)
-#define DW_EH_PE_ADJUST(encoding)	((encoding) & 0x70)
+//#define DW_EH_PE_ADJUST(encoding)	((encoding) & 0x70)
 #define DW_EH_PE_OMITTED(encoding)	((encoding)==DW_EH_PE_omit)
 
 
