@@ -32,6 +32,8 @@ mkdir -p mnt/opt
 sudo chown $USER mnt/opt
 cp test/test mnt/opt
 cp -p ./start.sh mnt/opt
+cp -p ./kunwind-debug.ko mnt/opt/
+cp -p ./kunwind.ko mnt/opt/
 sudo umount linux.img
 
 qemu-system-x86_64 \

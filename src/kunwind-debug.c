@@ -9,6 +9,7 @@
 #include <linux/errno.h>
 
 #include <proc_info.h>
+#include <kunwind.h>
 
 #include "kunwind-eh-frame.h"
 #include "unwind/unwind.h"
@@ -50,13 +51,26 @@ static ssize_t kunwind_debug_read(struct file *fp, char __user *buf,
 	return -ENOSYS; // Not implemented yet
 }
 
-static long kunwind_debug_ioctl(struct file *fp,
-		unsigned int cmd, unsigned long arg)
-{
 
-	int ret = unwind(NULL, 1);
-	(void) ret;
-	return -ENOSYS;
+long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	struct kunwind_debug_info info;
+	void __user *uinfo = (void *) arg;
+
+	if (cmd != KUNWIND_DEBUG_IOCTL)
+		return -ENOIOCTLCMD;
+
+	printk("file=%p cmd=%x arg=%lx\n", file, cmd, arg);
+
+	if (copy_from_user(&info, uinfo, sizeof(struct kunwind_debug_info)))
+		return -EFAULT;
+
+	info.y = info.x;
+
+	if (copy_to_user(uinfo, &info, sizeof(struct kunwind_debug_info)))
+		return -EFAULT;
+
+	return 0;
 }
 
 static struct file_operations fops = {
