@@ -5,10 +5,10 @@
 
 #define KUNWIND_BUG()	BUG()
 
-#define KUNWIND_BUGM(message, args...) {		\
+#define KUNWIND_BUGM(message, args...) ({		\
 		printk(message, ##args);		\
 		KUNWIND_BUG();				\
-	}
+	})
 
 #define EUNIMPL	1
 
