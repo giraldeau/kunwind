@@ -85,9 +85,14 @@ static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
 	vunmap(mod->base);
+	mod->base = NULL;
 	for (i = 0; i < mod->npages; ++i) {
 		put_page(mod->pages[i]);
 	}
+	kfree(mod->pages);
+	mod->npages = 0;
+	mod->pages = NULL;
+	mod->vma_start = 0;
 }
 
 static int refresh_unwind_info(struct kunwind_proc_modules **modsp)
@@ -110,8 +115,10 @@ static int release_unwind_info(struct kunwind_proc_modules *mods)
 	struct kunwind_stp_module *mod, *other;
 	list_for_each_entry_safe(mod, other, mods->stp_modules, list) {
 		close_kunwind_stp_module(mod);
+		kfree(mod);
 		list_del(&(mod->list));
 	}
+	kfree(mods);
 	return 0;
 }
 
@@ -125,7 +132,9 @@ static int kunwind_debug_open(struct inode *inode, struct file *file)
 
 static int kunwind_debug_release(struct inode *inode, struct file *file)
 {
-	return release_unwind_info(file->private_data);
+	int err = release_unwind_info(file->private_data);
+	file->private_data = NULL;
+	return err;
 }
 
 static ssize_t kunwind_debug_write(struct file *file, const char __user *buf,
@@ -136,32 +145,35 @@ static ssize_t kunwind_debug_write(struct file *file, const char __user *buf,
 	// IOCTL FILE OP
 	struct kunwind_proc_modules *mods = file->private_data;
 	struct proc_info *pinfo = kmalloc(size, GFP_KERNEL);
-	int i;
+	int i, err;
 
 	if (!pinfo)
 		return -ENOMEM;
 
 	if (copy_from_user(pinfo, buf, size)) {
-		kfree(pinfo);
-		pinfo = NULL;
-		return -EFAULT;
+		err = -EFAULT;
+		goto KUNWIND_DEBUG_WRITE_ERR;
 	}
-
-	printk("pinfo is %p\n", pinfo);
 
 	for (i = 0; i < pinfo->nr_eh_frames; ++i) {
 		struct eh_frame_info *einfo = &pinfo->eh_frames[i];
 		struct kunwind_stp_module *mod =
 				kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
-		int err = 0;
 
 		err = init_kunwind_stp_module(current, einfo, mod);
-		if (err)
-			return -EINVAL;
+		if (err) {
+			kfree(mod); // Free the module not added to the list
+			goto KUNWIND_DEBUG_WRITE_ERR;
+		}
 		list_add_tail(&(mod->list), mods->stp_modules);
 	}
 
+	kfree(pinfo);
 	return size;
+
+KUNWIND_DEBUG_WRITE_ERR:
+	kfree(pinfo);
+	return err;
 }
 
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
