@@ -36,7 +36,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		struct load_info *linfo,
 		struct kunwind_stp_module *mod)
 {
-	void *base;//, *hdr, *eh;
+	void *base;
 	int res;
 	unsigned long npages;
 	struct page **pages;
@@ -60,6 +60,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 
 	// vmap the pages so that we can access eh_frame directly
 	base = vmap(pages, npages, vma->vm_flags, vma->vm_page_prot);
+	printk("vmap kernel addr: %p\n", base);
 
 	mod->base = base;
 	mod->vma_start = vma->vm_start;
@@ -84,6 +85,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
+	printk("vunmap kernel addr: %p\n", mod->base);
 	vunmap(mod->base);
 	mod->base = NULL;
 	for (i = 0; i < mod->npages; ++i) {
@@ -137,22 +139,24 @@ static int kunwind_debug_release(struct inode *inode, struct file *file)
 	return err;
 }
 
-static ssize_t kunwind_debug_write(struct file *file, const char __user *buf,
-				   size_t size, loff_t *off)
+static long kunwind_proc_info_ioctl(struct file *file,
+		const struct proc_info __user *upinfo)
 {
-	// THIS IS A TEMPORARY FUNCTION THAT TAKES THE UNWIND INFO
-	// FROM USERSPACE BUT WE SHOULD FIND ALL PROCESS INFO FROM THE
-	// IOCTL FILE OP
 	struct kunwind_proc_modules *mods = file->private_data;
-	struct proc_info *pinfo = kmalloc(size, GFP_KERNEL);
+	struct proc_info *pinfo;
 	int i, err;
+	u32 size;
 
+	if (get_user(size, (typeof(size)*) upinfo))
+		return -EFAULT;
+
+	pinfo = kmalloc(size, GFP_KERNEL);
 	if (!pinfo)
 		return -ENOMEM;
 
-	if (copy_from_user(pinfo, buf, size)) {
+	if (copy_from_user(pinfo, upinfo, size)) {
 		err = -EFAULT;
-		goto KUNWIND_DEBUG_WRITE_ERR;
+		goto KUNWIND_PROC_INFO_IOCTL_ERR;
 	}
 
 	for (i = 0; i < pinfo->nr_load_segments; ++i) {
@@ -163,15 +167,15 @@ static ssize_t kunwind_debug_write(struct file *file, const char __user *buf,
 		err = init_kunwind_stp_module(current, linfo, mod);
 		if (err) {
 			kfree(mod); // Free the module not added to the list
-			goto KUNWIND_DEBUG_WRITE_ERR;
+			goto KUNWIND_PROC_INFO_IOCTL_ERR;
 		}
 		list_add_tail(&(mod->list), mods->stp_modules);
 	}
 
 	kfree(pinfo);
-	return size;
+	return 0;
 
-KUNWIND_DEBUG_WRITE_ERR:
+KUNWIND_PROC_INFO_IOCTL_ERR:
 	kfree(pinfo);
 	return err;
 }
@@ -181,18 +185,23 @@ long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct kunwind_debug_info info;
 	void __user *uinfo = (void *) arg;
 
-	if (cmd != KUNWIND_DEBUG_IOCTL)
-		return -ENOIOCTLCMD;
-
 	printk("file=%p cmd=%x arg=%lx\n", file, cmd, arg);
 
-	if (copy_from_user(&info, uinfo, sizeof(struct kunwind_debug_info)))
-		return -EFAULT;
-
-	info.y = info.x;
-
-	if (copy_to_user(uinfo, &info, sizeof(struct kunwind_debug_info)))
-		return -EFAULT;
+	switch (cmd) {
+	case KUNWIND_DEBUG_IOCTL:
+		// TODO Stub
+		if (copy_from_user(&info, uinfo, sizeof(struct kunwind_debug_info)))
+			return -EFAULT;
+		info.y = info.x;
+		if (copy_to_user(uinfo, &info, sizeof(struct kunwind_debug_info)))
+			return -EFAULT;
+		break;
+	case KUNWIND_PROC_INFO_IOCTL:
+		return kunwind_proc_info_ioctl(file, (struct proc_info __user *)arg);
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
 
 	return 0;
 }
@@ -200,8 +209,10 @@ long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 static struct file_operations fops = {
 	.open = kunwind_debug_open,
 	.release = kunwind_debug_release,
-	.write = kunwind_debug_write,
 	.unlocked_ioctl = kunwind_debug_ioctl,
+#ifdef CONFIG_COMPAT
+	.compat_ioctl = kunwind_debug_ioctl,
+#endif
 };
 
 static struct proc_dir_entry *proc_entry;

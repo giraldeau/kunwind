@@ -1,6 +1,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+#include <sys/ioctl.h>
+
 #include "find_proc_info.h"
 
 int main(int argc, char **argv)
@@ -13,7 +15,7 @@ int main(int argc, char **argv)
 	}
 
 	struct proc_info *proc_info = find_proc_info();
-	fwrite(proc_info, proc_info->size, 1, out);
+	ioctl(fileno(out), KUNWIND_PROC_INFO_IOCTL, proc_info);
 
 	return 0;
 }
