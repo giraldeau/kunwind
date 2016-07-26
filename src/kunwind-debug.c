@@ -33,7 +33,7 @@ struct kunwind_stp_module {
 };
 
 static int init_kunwind_stp_module(struct task_struct *task,
-		struct eh_frame_info *einfo,
+		struct load_info *linfo,
 		struct kunwind_stp_module *mod)
 {
 	void *base;//, *hdr, *eh;
@@ -45,7 +45,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
-	vma = find_vma(task->mm, einfo->start);
+	vma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
 
 	// Get the vma pages
 	npages = vma_pages(vma);
@@ -65,13 +65,13 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->vma_start = vma->vm_start;
 	mod->pages = pages;
 	mod->npages = npages;
-	mod->stp_mod.unwind_hdr_addr = einfo->start;
-	mod->stp_mod.unwind_hdr_len = einfo->size;
-	mod->stp_mod.unwind_hdr = einfo->start - mod->vma_start + mod->base;
+	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr;
+	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
+	mod->stp_mod.unwind_hdr = linfo->eh_frame_hdr_addr - mod->vma_start + mod->base;
 
 	// debug
 	printk("npages %ld, flags %lx, prot %lx\n", npages, vma->vm_flags, vma->vm_page_prot);
-	res = get_user(test, (unsigned long *)einfo->start);
+	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
 	if (res < 0) return res;
 	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr))
 		KUNWIND_BUGM("Bad eh_frame virtual kernel address.");
@@ -155,12 +155,12 @@ static ssize_t kunwind_debug_write(struct file *file, const char __user *buf,
 		goto KUNWIND_DEBUG_WRITE_ERR;
 	}
 
-	for (i = 0; i < pinfo->nr_eh_frames; ++i) {
-		struct eh_frame_info *einfo = &pinfo->eh_frames[i];
+	for (i = 0; i < pinfo->nr_load_segments; ++i) {
+		struct load_info *linfo = &pinfo->load_segments[i];
 		struct kunwind_stp_module *mod =
 				kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
 
-		err = init_kunwind_stp_module(current, einfo, mod);
+		err = init_kunwind_stp_module(current, linfo, mod);
 		if (err) {
 			kfree(mod); // Free the module not added to the list
 			goto KUNWIND_DEBUG_WRITE_ERR;

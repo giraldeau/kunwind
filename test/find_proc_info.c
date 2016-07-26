@@ -4,22 +4,22 @@
 
 #include "find_proc_info.h"
 
-typedef struct eh_frame_list {
-	eh_frame_info_t info;
-	struct eh_frame_list *next;
-} eh_frame_list_t;
+struct load_info_list {
+	struct load_info info;
+	struct load_info_list *next;
+};
 
-typedef struct extract_eh_frame_info_data {
-	eh_frame_list_t *list_head;
-	eh_frame_list_t *list_tail;
-	size_t nr_eh_frames;
-} extract_eh_frame_info_data_t;
+struct extract_unwind_info_data {
+	struct load_info_list *list_head;
+	struct load_info_list *list_tail;
+	size_t nr_load_segments;
+};
 
-static int extract_eh_frame_info(struct dl_phdr_info *info,
+static int extract_unwind_info(struct dl_phdr_info *info,
 				 size_t size, void * data)
 {
-	extract_eh_frame_info_data_t *extract_data =
-		(extract_eh_frame_info_data_t *) data;
+	struct extract_unwind_info_data *extract_data =
+		(struct extract_unwind_info_data *) data;
 
 	// Find eh_frame program header
 	const ElfW(Phdr) *eh_phdr = NULL;
@@ -34,30 +34,30 @@ static int extract_eh_frame_info(struct dl_phdr_info *info,
 		return -ERR_NO_EH_PHDR;
 
 	// Fill data
-	eh_frame_list_t *elem = malloc(sizeof(eh_frame_list_t));
+	struct load_info_list *elem = malloc(sizeof(struct load_info_list));
 	ElfW(Addr) addr;
 	elem->info.obj_addr = addr = info->dlpi_addr;
-	elem->info.start = addr + eh_phdr->p_vaddr;
-	elem->info.size = eh_phdr->p_memsz;
+	elem->info.eh_frame_hdr_addr = addr + eh_phdr->p_vaddr;
+	elem->info.eh_frame_hdr_size = eh_phdr->p_memsz;
 	elem->next = NULL;
 
 	// Add to list
 	if (!extract_data->list_head) {
 		extract_data->list_head =
 			extract_data->list_tail = elem;
-		extract_data->nr_eh_frames = 1;
+		extract_data->nr_load_segments = 1;
 	} else {
 		extract_data->list_tail->next = elem;
 		extract_data->list_tail = elem;
-		extract_data->nr_eh_frames++;
+		extract_data->nr_load_segments++;
 	}
 
 	return 0;
 }
 
-static void free_eh_frame_list(eh_frame_list_t *list)
+static void free_load_info_list(struct load_info_list *list)
 {
-	eh_frame_list_t *next = list;
+	struct load_info_list *next = list;
 	do {
 		list = next;
 		next = list->next;
@@ -65,29 +65,29 @@ static void free_eh_frame_list(eh_frame_list_t *list)
 	} while (next);
 }
 
-proc_info_t *find_proc_info(void)
+struct proc_info *find_proc_info(void)
 {
-	extract_eh_frame_info_data_t data = { 0 };
-	int err = dl_iterate_phdr(extract_eh_frame_info, (void *) &data);
+	struct extract_unwind_info_data data = { 0 };
+	int err = dl_iterate_phdr(extract_unwind_info, (void *) &data);
 
 	if (err) {
-		free_eh_frame_list(data.list_head);
+		free_load_info_list(data.list_head);
 		return NULL;
 	}
 
-	size_t proc_info_size = sizeof(proc_info_t) +
-		data.nr_eh_frames * sizeof(eh_frame_info_t);
-	proc_info_t *proc_info = malloc(proc_info_size);
+	size_t proc_info_size = sizeof(struct proc_info) +
+		data.nr_load_segments * sizeof(struct load_info);
+	struct proc_info *proc_info = malloc(proc_info_size);
 
 	// Fill info
 	proc_info->size = proc_info_size;
-	proc_info->nr_eh_frames = data.nr_eh_frames;
-	eh_frame_list_t *elem = data.list_head;
-	eh_frame_info_t *proc_eh = proc_info->eh_frames;
-	for (; elem; elem = elem->next, ++proc_eh) {
-		*proc_eh = elem->info;
+	proc_info->nr_load_segments = data.nr_load_segments;
+	struct load_info_list *elem = data.list_head;
+	struct load_info *linfo = proc_info->load_segments;
+	for (; elem; elem = elem->next, ++linfo) {
+		*linfo = elem->info;
 	}
 
-	free_eh_frame_list(data.list_head);
+	free_load_info_list(data.list_head);
 	return proc_info;
 }

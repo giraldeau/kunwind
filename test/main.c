@@ -12,7 +12,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	proc_info_t *proc_info = find_proc_info();
+	struct proc_info *proc_info = find_proc_info();
 	fwrite(proc_info, proc_info->size, 1, out);
 
 	return 0;
