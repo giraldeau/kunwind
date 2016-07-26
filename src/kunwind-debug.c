@@ -180,25 +180,53 @@ KUNWIND_PROC_INFO_IOCTL_ERR:
 	return err;
 }
 
+static long kunwind_unwind_ioctl(struct file *file,
+		struct kunwind_backtrace __user *uback)
+{
+	struct kunwind_proc_modules *mods = file->private_data;
+	struct kunwind_backtrace *back;
+	int err;
+	u32 capacity, size = 0;
+
+	if (get_user(capacity, (typeof(capacity)*) uback))
+		return -EFAULT;
+
+	back = kmalloc(capacity, GFP_KERNEL);
+	if (!back)
+		return -ENOMEM;
+
+	back->capacity = capacity;
+
+	while (size < capacity) {
+	// TODO unwind() iteratively until error, end of stack, or full cap
+		++size;
+	}
+	back->size = size;
+
+	if (copy_to_user(uback, back, size)) {
+		err = -EFAULT;
+		goto KUNWIND_UNWIND_IOCTL_ERR;
+	}
+
+	kfree(back);
+	return 0;
+
+KUNWIND_UNWIND_IOCTL_ERR:
+	kfree(back);
+	return err;
+}
+
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	struct kunwind_debug_info info;
-	void __user *uinfo = (void *) arg;
-
 	printk("file=%p cmd=%x arg=%lx\n", file, cmd, arg);
 
 	switch (cmd) {
-	case KUNWIND_DEBUG_IOCTL:
-		// TODO Stub
-		if (copy_from_user(&info, uinfo, sizeof(struct kunwind_debug_info)))
-			return -EFAULT;
-		info.y = info.x;
-		if (copy_to_user(uinfo, &info, sizeof(struct kunwind_debug_info)))
-			return -EFAULT;
-		break;
 	case KUNWIND_PROC_INFO_IOCTL:
-		return kunwind_proc_info_ioctl(file, (struct proc_info __user *)arg);
-		break;
+		return kunwind_proc_info_ioctl(file,
+		                (struct proc_info __user *) arg);
+	case KUNWIND_UNWIND_IOCTL:
+		return kunwind_unwind_ioctl(file,
+		                (struct kunwind_backtrace __user *) arg);
 	default:
 		return -ENOIOCTLCMD;
 	}
