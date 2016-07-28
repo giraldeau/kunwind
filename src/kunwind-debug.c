@@ -21,6 +21,7 @@
 
 struct kunwind_proc_modules {
 	struct list_head *stp_modules;
+	int compat :1;
 };
 
 struct kunwind_stp_module {
@@ -32,9 +33,61 @@ struct kunwind_stp_module {
 	int npages;
 };
 
+static int complete_load_info(struct load_info *linfo,
+		struct kunwind_stp_module *mod,
+		struct kunwind_proc_modules *proc)
+{
+	bool incomplete = false;
+
+	if (!linfo->eh_frame_hdr_addr || !linfo->eh_frame_hdr_size) {
+		// Do the equivalent of dl_iterate_phdr using the Ehdr
+		// see http://stackoverflow.com/a/38618657/2041995
+		// Except we already have the executable vma
+
+		incomplete = true;
+	}
+
+	if (!linfo->eh_frame_addr || !linfo->eh_frame_size || incomplete) {
+		u8 *eh, *hdr, *ptr;
+		const u8 *pos;
+		unsigned long eh_addr, eh_len, hdr_addr, hdr_len, cie_fde_size = 0;
+
+		// Use the .eh_frame_hdr pointer to find the .eh_frame section
+		hdr = mod->stp_mod.unwind_hdr;
+		hdr_addr = mod->stp_mod.unwind_hdr_addr;
+		hdr_len = mod->stp_mod.unwind_hdr_len;
+
+		// FIXME -1 tablesize might not right in following call
+		pos = hdr + 4;
+		eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], mod->vma_start,
+				hdr_addr, 1, proc->compat, -1);
+		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
+			eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
+		eh = (void *)(eh_addr - mod->vma_start + mod->base);
+		ptr = eh;
+		do {
+			cie_fde_size = *((u32 *) ptr);
+			ptr += 4;
+			if (cie_fde_size == 0xffffffff) {
+				cie_fde_size = *((u64 *) ptr);
+				ptr += 8;
+			}
+			ptr += cie_fde_size;
+		} while (cie_fde_size);
+		eh_len = (unsigned long) ptr - (unsigned long) eh;
+
+		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr = eh_addr;
+		mod->stp_mod.eh_frame_len = linfo->eh_frame_size = eh_len;
+		mod->stp_mod.eh_frame = eh;
+	}
+
+	return 0;
+}
+
 static int init_kunwind_stp_module(struct task_struct *task,
 		struct load_info *linfo,
-		struct kunwind_stp_module *mod)
+		struct kunwind_stp_module *mod,
+		struct kunwind_proc_modules *proc)
 {
 	void *base;
 	int res;
@@ -62,13 +115,24 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	base = vmap(pages, npages, vma->vm_flags, vma->vm_page_prot);
 	printk("vmap kernel addr: %p\n", base);
 
+	// bookkeeping info
 	mod->base = base;
 	mod->vma_start = vma->vm_start;
 	mod->pages = pages;
 	mod->npages = npages;
+	// eh_frame_hdr info
 	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
 	mod->stp_mod.unwind_hdr = linfo->eh_frame_hdr_addr - mod->vma_start + mod->base;
+	// eh_frame info
+	mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr;
+	mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
+	mod->stp_mod.eh_frame = linfo->eh_frame_addr - mod->vma_start + mod->base;
+
+	res = complete_load_info(linfo, mod, proc);
+	if (res) return res;
+
+	printk("Eh frame hdr addr = %#lx, len = %#lx\n", linfo->eh_frame_addr, linfo->eh_frame_size);
 
 	// debug
 	printk("npages %ld, flags %lx, prot %lx\n", npages, vma->vm_flags, vma->vm_page_prot);
@@ -134,6 +198,7 @@ static int kunwind_debug_open(struct inode *inode, struct file *file)
 
 static int kunwind_debug_release(struct inode *inode, struct file *file)
 {
+	printk("Starting to release file\n");
 	int err = release_unwind_info(file->private_data);
 	file->private_data = NULL;
 	return err;
@@ -163,8 +228,7 @@ static long kunwind_proc_info_ioctl(struct file *file,
 		struct load_info *linfo = &pinfo->load_segments[i];
 		struct kunwind_stp_module *mod =
 				kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
-
-		err = init_kunwind_stp_module(current, linfo, mod);
+		err = init_kunwind_stp_module(current, linfo, mod, mods);
 		if (err) {
 			kfree(mod); // Free the module not added to the list
 			goto KUNWIND_PROC_INFO_IOCTL_ERR;
