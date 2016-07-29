@@ -20,7 +20,7 @@
 #define PROC_FILENAME "kunwind_debug"
 
 struct kunwind_proc_modules {
-	struct list_head *stp_modules;
+	struct list_head stp_modules;
 	int compat :1;
 };
 
@@ -165,9 +165,8 @@ static int init_proc_unwind_info(struct kunwind_proc_modules *mods)
 {
 	if (!mods)
 		return -EINVAL;
-	INIT_LIST_HEAD(mods->stp_modules);
-
-	// TODO complete unwind info
+	memset(mods, 0, sizeof(struct kunwind_proc_modules));
+	INIT_LIST_HEAD(&(mods->stp_modules));
 
 	return 0;
 }
@@ -175,10 +174,10 @@ static int init_proc_unwind_info(struct kunwind_proc_modules *mods)
 static int release_unwind_info(struct kunwind_proc_modules *mods)
 {
 	struct kunwind_stp_module *mod, *other;
-	list_for_each_entry_safe(mod, other, mods->stp_modules, list) {
+	list_for_each_entry_safe(mod, other, &(mods->stp_modules), list) {
 		close_kunwind_stp_module(mod);
-		kfree(mod);
 		list_del(&(mod->list));
+		kfree(mod);
 	}
 	kfree(mods);
 	return 0;
@@ -237,7 +236,7 @@ static long kunwind_proc_info_ioctl(struct file *file,
 			kfree(mod); // Free the module not added to the list
 			goto KUNWIND_PROC_INFO_IOCTL_ERR;
 		}
-		list_add_tail(&(mod->list), mods->stp_modules);
+		list_add_tail(&(mod->list), &(mods->stp_modules));
 	}
 
 	kfree(pinfo);
