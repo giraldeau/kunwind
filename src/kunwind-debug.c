@@ -161,17 +161,13 @@ static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 	mod->vma_start = 0;
 }
 
-static int refresh_unwind_info(struct kunwind_proc_modules **modsp)
+static int init_proc_unwind_info(struct kunwind_proc_modules *mods)
 {
-	struct kunwind_proc_modules *mods;
-	if (!modsp)
+	if (!mods)
 		return -EINVAL;
-	if (!(mods = *modsp)){
-		mods = *modsp = kmalloc(sizeof(struct kunwind_proc_modules), GFP_KERNEL);
-		INIT_LIST_HEAD(mods->stp_modules);
-	}
+	INIT_LIST_HEAD(mods->stp_modules);
 
-	// TODO
+	// TODO complete unwind info
 
 	return 0;
 }
@@ -191,8 +187,16 @@ static int release_unwind_info(struct kunwind_proc_modules *mods)
 static int kunwind_debug_open(struct inode *inode, struct file *file)
 {
 	int err;
-	file->private_data = NULL;
-	err = refresh_unwind_info((struct kunwind_proc_modules **)&(file->private_data));
+	struct kunwind_proc_modules *mods =
+			kmalloc(sizeof(struct kunwind_proc_modules), GFP_KERNEL);
+	if (!mods)
+		return -EFAULT;
+	err = init_proc_unwind_info(mods);
+	if (err) {
+		kfree(mods);
+	} else {
+		file->private_data = mods;
+	}
 	return err;
 }
 
