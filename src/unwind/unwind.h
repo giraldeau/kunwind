@@ -49,17 +49,10 @@ static inline int _stp_is_compat_task(void)
 
 #endif /* CONFIG_COMPAT */
 
-struct _stp_symbol {
-	unsigned long addr;
-	const char *symbol;
-};
-
 struct _stp_section {
         const char *name;
         unsigned long static_addr; /* XXX non-null if everywhere the same. */
 	unsigned long size; /* length of the address space module covers. */
-	struct _stp_symbol *symbols;  /* ordered by address */
-  	unsigned num_symbols;
 
 	/* Synthesized index for .debug_frame table, keep section
 	   offset to adjust addresses relative to load address. */
@@ -79,19 +72,11 @@ struct _stp_module {
 	void *debug_frame;
 	void *eh_frame;
 	void *unwind_hdr;
-  void *debug_line;
 	uint32_t debug_frame_len;
 	uint32_t eh_frame_len;
 	uint32_t unwind_hdr_len;
-  uint32_t debug_line_len;
 	unsigned long eh_frame_addr; /* Orig load address (offset) .eh_frame */
 	unsigned long unwind_hdr_addr; /* same for .eh_frame_hdr */
-
-	/* build-id information */
-	unsigned char *build_id_bits;
-	unsigned long  build_id_offset;
-	unsigned long  notes_sect;
-	int build_id_len;
 };
 
 /** Safely read from userspace or kernelspace.
