@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <link.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #include "find_proc_info.h"
 
@@ -21,13 +22,20 @@ static int extract_unwind_info(struct dl_phdr_info *info,
 	struct extract_unwind_info_data *extract_data =
 		(struct extract_unwind_info_data *) data;
 
-	// Find eh_frame program header
+	// Find eh_frame program header and check for dynamic
 	const ElfW(Phdr) *eh_phdr = NULL;
+	bool dynamic = false;
+	unsigned features = 0;
 	for (size_t i = 0; i < info->dlpi_phnum; ++i) {
 		if (info->dlpi_phdr[i].p_type == PT_GNU_EH_FRAME) {
 			eh_phdr = &info->dlpi_phdr[i];
-			break;
+			features++;
+		} else if (info->dlpi_phdr[i].p_type == PT_DYNAMIC) {
+			dynamic = true;
+			features++;
 		}
+		if (features >= 2)
+			break;
 	}
 
 	if (!eh_phdr)

@@ -4,6 +4,8 @@
 #include <linux/ioctl.h>
 #include <linux/types.h>
 
+#define PATHLEN 60
+
 /*
  * Location of the unwind info of the program or a dynamically
  * loaded/linked library.
@@ -14,7 +16,8 @@ struct load_info {
 	__u64 eh_frame_hdr_size;
 	__u64 eh_frame_addr;
 	__u64 eh_frame_size;
-	// TODO .dynamic etc to adjust for relocation
+	__u8 dynamic :1;
+	__u8 path[PATHLEN];
 };
 
 struct proc_info {

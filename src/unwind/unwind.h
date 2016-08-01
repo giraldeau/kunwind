@@ -52,7 +52,6 @@ static inline int _stp_is_compat_task(void)
 struct _stp_section {
         const char *name;
         unsigned long static_addr; /* XXX non-null if everywhere the same. */
-	unsigned long size; /* length of the address space module covers. */
 
 	/* Synthesized index for .debug_frame table, keep section
 	   offset to adjust addresses relative to load address. */
