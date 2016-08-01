@@ -608,4 +608,12 @@ struct unwind_cache {
 	unsigned long pc[MAXBACKTRACE];
 };
 
+struct kunwind_proc_modules;
+
+int unwind_full(struct unwind_context *context,
+		struct kunwind_proc_modules *proc,
+		__u64 *ip_buf,
+		unsigned int ip_buf_len,
+		unsigned int *size);
+
 #endif /*_STP_UNWIND_H_*/

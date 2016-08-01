@@ -6,6 +6,7 @@
 #include <linux/module.h>
 #include <linux/printk.h>
 #include <linux/proc_fs.h>
+#include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/uaccess.h>
@@ -258,24 +259,25 @@ static long kunwind_unwind_ioctl(struct file *file,
 	struct kunwind_proc_modules *mods = file->private_data;
 	struct kunwind_backtrace *back;
 	int err;
-	u32 capacity, size = 0;
+	u32 capacity, struct_size;
+	struct unwind_context *context;
 
 	if (get_user(capacity, (typeof(capacity)*) uback))
 		return -EFAULT;
 
-	back = kmalloc(capacity, GFP_KERNEL);
+	struct_size = sizeof(struct kunwind_backtrace) +
+		capacity * sizeof(__u64);
+	back = kmalloc(struct_size, GFP_KERNEL);
 	if (!back)
 		return -ENOMEM;
 
+	context->info.regs = *current_pt_regs();
 	back->capacity = capacity;
+	err = unwind_full(context, mods, back->backtrace, back->capacity, &(back->size));
 
-	while (size < capacity) {
-	// TODO unwind() iteratively until error, end of stack, or full cap
-		++size;
-	}
-	back->size = size;
+	WARN(err, "Error happened while unwinding");
 
-	if (copy_to_user(uback, back, size)) {
+	if (copy_to_user(uback, back, struct_size)) {
 		err = -EFAULT;
 		goto KUNWIND_UNWIND_IOCTL_ERR;
 	}

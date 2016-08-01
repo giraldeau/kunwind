@@ -1576,4 +1576,23 @@ int unwind(struct unwind_context *context, int user,
 
 	return res;
 }
-EXPORT_SYMBOL_GPL(unwind);
+
+int unwind_full(struct unwind_context *context,
+		struct kunwind_proc_modules *proc,
+		__u64 *ip_buf,
+		unsigned int ip_buf_len,
+		unsigned int *size)
+{
+	int err;
+	size = 0;
+	while (ip_buf_len) {
+		*ip_buf = UNW_PC(&(context->info));
+
+		err = unwind(context, 1, proc);
+		if (err || !*ip_buf) break;
+		ip_buf++, size++, ip_buf_len--;
+	}
+
+	return err;
+}
+EXPORT_SYMBOL_GPL(unwind_full);
