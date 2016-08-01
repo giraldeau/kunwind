@@ -608,6 +608,4 @@ struct unwind_cache {
 	unsigned long pc[MAXBACKTRACE];
 };
 
-int unwind(struct unwind_context *context, int user);
-
 #endif /*_STP_UNWIND_H_*/

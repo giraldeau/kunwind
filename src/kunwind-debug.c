@@ -14,24 +14,11 @@
 #include <proc_info.h>
 #include <kunwind.h>
 
+#include "kunwind-debug.h"
 #include "kunwind-bug.h"
 #include "unwind/unwind.h"
 
 #define PROC_FILENAME "kunwind_debug"
-
-struct kunwind_proc_modules {
-	struct list_head stp_modules;
-	int compat :1;
-};
-
-struct kunwind_stp_module {
-	struct _stp_module stp_mod;
-	struct list_head list;
-	void *base;
-	unsigned long vma_start;
-	struct page **pages;
-	int npages;
-};
 
 static int complete_load_info(struct load_info *linfo,
 		struct kunwind_stp_module *mod,
@@ -57,7 +44,7 @@ static int complete_load_info(struct load_info *linfo,
 		hdr_addr = mod->stp_mod.unwind_hdr_addr;
 		hdr_len = mod->stp_mod.unwind_hdr_len;
 
-		// FIXME -1 tablesize might not right in following call
+		// FIXME -1 tablesize might not be right in following call
 		pos = hdr + 4;
 		eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], mod->vma_start,
 				hdr_addr, 1, proc->compat, -1);
@@ -119,6 +106,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	// bookkeeping info
 	mod->base = base;
 	mod->vma_start = vma->vm_start;
+	mod->vma_end = vma->vm_end;
 	mod->pages = pages;
 	mod->npages = npages;
 	// eh_frame_hdr info
@@ -174,12 +162,14 @@ static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 	mod->stp_mod.num_sections = 0;
 }
 
-static int init_proc_unwind_info(struct kunwind_proc_modules *mods)
+static int init_proc_unwind_info(struct kunwind_proc_modules *mods,
+				 int compat)
 {
 	if (!mods)
 		return -EINVAL;
 	memset(mods, 0, sizeof(struct kunwind_proc_modules));
 	INIT_LIST_HEAD(&(mods->stp_modules));
+	mods->compat = compat;
 
 	return 0;
 }
@@ -198,12 +188,14 @@ static int release_unwind_info(struct kunwind_proc_modules *mods)
 
 static int kunwind_debug_open(struct inode *inode, struct file *file)
 {
-	int err;
+	int err, compat = 0;
 	struct kunwind_proc_modules *mods =
 			kmalloc(sizeof(struct kunwind_proc_modules), GFP_KERNEL);
 	if (!mods)
 		return -EFAULT;
-	err = init_proc_unwind_info(mods);
+
+	compat = _stp_is_compat_task();
+	err = init_proc_unwind_info(mods, compat);
 	if (err) {
 		kfree(mods);
 	} else {

@@ -16,6 +16,7 @@
 #include <linux/types.h>
 #include <linux/module.h>
 
+#include "kunwind-debug.h" // TODO rename the files
 #include "debug.h"
 #include "unwind/unwind.h"
 
@@ -25,9 +26,27 @@
 static int
 stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
 			    unsigned long *vm_start, unsigned long *vm_end,
-			    const char **path)
+			    const char **path, struct kunwind_stp_module *kunw_mod)
 {
-	return -ESRCH;
+	if (!kunw_mod)
+		return -ESRCH;
+	*vm_start = kunw_mod->vma_start;
+	*vm_end = kunw_mod->vma_end;
+	// TODO fill or remove remove other fields?
+	return 0;
+}
+
+static struct kunwind_stp_module
+*kunw_mod_lookup(unsigned long pc, struct kunwind_proc_modules *proc)
+{
+	struct kunwind_stp_module *kunw_mod = NULL, *pos;
+	list_for_each_entry(pos, &(proc->stp_modules), list) {
+		if (pc >= pos->vma_start && pc <= pos->vma_end) {
+			kunw_mod = pos;
+			break;
+		}
+	}
+	return kunw_mod;
 }
 
 /* Whether this is a real CIE. Assumes CIE (length) sane. */
@@ -724,7 +743,8 @@ static unsigned long
 adjustStartLoc (unsigned long startLoc,
 		struct _stp_module *m,
 		struct _stp_section *s,
-		unsigned ptrType, int is_ehframe, int user)
+		unsigned ptrType, int is_ehframe, int user,
+		struct kunwind_stp_module *kunw_mod)
 {
   unsigned long vm_addr = 0;
 
@@ -757,7 +777,7 @@ adjustStartLoc (unsigned long startLoc,
 
   /* User space or kernel dynamic module. */
   if (user && strcmp (s->name, ".dynamic") == 0)
-    stap_find_vma_map_info_user(current->group_leader, m, &vm_addr, NULL, NULL);
+	  stap_find_vma_map_info_user(current->group_leader, m, &vm_addr, NULL, NULL, kunw_mod);
   else
     vm_addr = s->static_addr;
 
@@ -773,7 +793,7 @@ adjustStartLoc (unsigned long startLoc,
 static u32 *_stp_search_unwind_hdr(unsigned long pc,
 				   struct _stp_module *m,
 				   struct _stp_section *s,
-				   int is_ehframe, int user, int compat_task)
+				   int is_ehframe, int user, int compat_task, struct kunwind_stp_module *kunw_mod)
 {
 	const u8 *ptr, *end, *hdr = is_ehframe ? m->unwind_hdr: s->debug_hdr;
 	uint32_t hdr_len = is_ehframe ? m->unwind_hdr_len : s->debug_hdr_len;
@@ -836,7 +856,7 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 		startLoc = read_ptr_sect(&cur, cur + tableSize, hdr[3], 0,
 					 eh_hdr_addr, user, compat_task, tableSize);
 		startLoc = adjustStartLoc(startLoc, m, s, hdr[3],
-					  is_ehframe, user);
+					  is_ehframe, user, kunw_mod);
 		if (pc < startLoc)
 			num /= 2;
 		else {
@@ -848,7 +868,7 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 	if (num == 1
 	    && (startLoc = adjustStartLoc(read_ptr_sect(&ptr, ptr + tableSize, hdr[3], 0,
 							eh_hdr_addr, user, compat_task, tableSize),
-					  m, s, hdr[3], is_ehframe, user)) != 0 && pc >= startLoc) {
+					  m, s, hdr[3], is_ehframe, user, kunw_mod)) != 0 && pc >= startLoc) {
 		unsigned long off;
 		off = read_ptr_sect(&ptr, ptr + tableSize, hdr[3],
 				    0, eh_hdr_addr, user, compat_task, tableSize);
@@ -1171,7 +1191,8 @@ divzero:
 static int unwind_frame(struct unwind_context *context,
 			struct _stp_module *m, struct _stp_section *s,
 			void *table, uint32_t table_len, int is_ehframe,
-			int user, int compat_task)
+			int user, int compat_task,
+			struct kunwind_stp_module *kunw_mod)
 {
 	const u32 *fde = NULL, *cie = NULL;
 	/* The start and end of the CIE CFI instructions. */
@@ -1205,7 +1226,7 @@ static int unwind_frame(struct unwind_context *context,
 	for (i = UNW_NR_REAL_REGS; i < ARRAY_SIZE(REG_STATE.regs); ++i)
 		set_no_state_rule(i, Nowhere, state);
 
-	fde = _stp_search_unwind_hdr(pc, m, s, is_ehframe, user, compat_task);
+	fde = _stp_search_unwind_hdr(pc, m, s, is_ehframe, user, compat_task, kunw_mod);
 	dbug_unwind(1, "%s: fde=%lx\n", m->path, (unsigned long) fde);
 
 	/* found the fde, now set startLoc and endLoc */
@@ -1224,7 +1245,7 @@ static int unwind_frame(struct unwind_context *context,
 					  &call_frame,
 					  compat_task) < 0)
 				goto err;
-			startLoc = adjustStartLoc(startLoc, m, s, ptrType, is_ehframe, user);
+			startLoc = adjustStartLoc(startLoc, m, s, ptrType, is_ehframe, user, kunw_mod);
 			endLoc = startLoc + locRange;
 			dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
 			if (pc > endLoc) {
@@ -1259,7 +1280,7 @@ static int unwind_frame(struct unwind_context *context,
 					     &retAddrReg,
 					     &call_frame, compat_task) < 0)
 				break;
-			startLoc = adjustStartLoc(startLoc, m, s, ptrType, is_ehframe, user);
+			startLoc = adjustStartLoc(startLoc, m, s, ptrType, is_ehframe, user, kunw_mod);
 			if (!startLoc)
 				continue;
 			endLoc = startLoc + locRange;
@@ -1475,10 +1496,12 @@ done:
 #undef FRAME_REG
 }
 
-int unwind(struct unwind_context *context, int user)
+int unwind(struct unwind_context *context, int user,
+	   struct kunwind_proc_modules *proc)
 {
 	struct _stp_module *m;
 	struct _stp_section *s = NULL;
+	struct kunwind_stp_module *kunw_mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
 	unsigned long pc = UNW_PC(frame) - frame->call_frame;
 	int res;
@@ -1497,7 +1520,8 @@ int unwind(struct unwind_context *context, int user)
 
 	if (user)
 	  {
-	    m = NULL;//_stp_umod_lookup (pc, current, & module_name, NULL, NULL);
+		  kunw_mod = kunw_mod_lookup(pc, proc);
+		  m = &(kunw_mod->stp_mod);
 	    if (m)
 	      s = &m->sections[0];
 	  }
@@ -1535,11 +1559,13 @@ int unwind(struct unwind_context *context, int user)
 
 	dbug_unwind(1, "trying debug_frame\n");
 	res = unwind_frame (context, m, s, m->debug_frame,
-			    m->debug_frame_len, 0, user, compat_task);
+			    m->debug_frame_len, 0, user, compat_task,
+			    kunw_mod);
 	if (res != 0) {
 	  dbug_unwind(1, "debug_frame failed: %d, trying eh_frame\n", res);
 	  res = unwind_frame (context, m, s, m->eh_frame,
-			      m->eh_frame_len, 1, user, compat_task);
+			      m->eh_frame_len, 1, user, compat_task,
+			      kunw_mod);
 	}
 
         /* This situation occurs where some unwind data was found, but
