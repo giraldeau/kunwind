@@ -748,12 +748,6 @@ adjustStartLoc (unsigned long startLoc,
 {
   unsigned long vm_addr = 0;
 
-  /* If we're unwinding the current module, then the addresses
-     we've got don't require adjustment, they didn't come from user
-     space */
-  if(strcmp(THIS_MODULE->name,m->name)==0)
-      return startLoc;
-
   /* XXX - some, or all, of this should really be done by
      _stp_module_relocate and/or read_pointer. */
   dbug_unwind(2, "adjustStartLoc=%lx, ptrType=%s, m=%s, s=%s eh=%d\n",
@@ -1580,17 +1574,17 @@ int unwind(struct unwind_context *context, int user,
 int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
 		__u64 *ip_buf,
-		unsigned int ip_buf_len,
-		unsigned int *size)
+		__u32 ip_buf_len,
+		__u32 *size)
 {
 	int err;
-	size = 0;
+	*size = 0;
 	while (ip_buf_len) {
 		*ip_buf = UNW_PC(&(context->info));
-
+		printk("size %d, ip %p, ip_buf_len %d\n", *size, *ip_buf, ip_buf_len);
 		err = unwind(context, 1, proc);
 		if (err || !*ip_buf) break;
-		ip_buf++, size++, ip_buf_len--;
+		ip_buf++, (*size)++, ip_buf_len--;
 	}
 
 	return err;

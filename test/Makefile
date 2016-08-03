@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-g -I../include
+CFLAGS=-g -I../include -rdynamic
 SRCS=main.c find_proc_info.c
 OBJS := ${SRCS:.c=.o}
 PROGNAME=test

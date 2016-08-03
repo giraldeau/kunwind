@@ -85,6 +85,10 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	unsigned long test;
 	struct _stp_section *section;
 
+	// TODO fill if necessary or remove
+	mod->stp_mod.name = "";
+	mod->stp_mod.path = "";
+
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
 	vma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
@@ -125,6 +129,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		return -ENOMEM; // FIXME free resources correctly
 	memset(section, 0, sizeof(*section));
 	section->name = linfo->dynamic ? ".dynamic" : ".absolute";
+	section->static_addr = 0; // FIXME what's that
 	mod->stp_mod.sections = section;
 	mod->stp_mod.num_sections = 1;
 
@@ -260,7 +265,7 @@ static long kunwind_unwind_ioctl(struct file *file,
 	struct kunwind_backtrace *back;
 	int err;
 	u32 capacity, struct_size;
-	struct unwind_context *context;
+	struct unwind_context context;
 
 	if (get_user(capacity, (typeof(capacity)*) uback))
 		return -EFAULT;
@@ -271,9 +276,9 @@ static long kunwind_unwind_ioctl(struct file *file,
 	if (!back)
 		return -ENOMEM;
 
-	context->info.regs = *current_pt_regs();
+	context.info.regs = *current_pt_regs();
 	back->capacity = capacity;
-	err = unwind_full(context, mods, back->backtrace, back->capacity, &(back->size));
+	err = unwind_full(&context, mods, back->backtrace, back->capacity, &(back->size));
 
 	WARN(err, "Error happened while unwinding");
 
