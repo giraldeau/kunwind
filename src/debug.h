@@ -15,9 +15,11 @@
  * errk() writes to the system log.
  */
 
-#define  _stp_dbug(func, line, fmt, args...) ({				\
-			printk("stap debug in [%s] at line %d : ", func, line); \
-			printk(fmt, ##args);			\
+#define _stp_warn(fmt, args...) printk(fmt "\n", ##args);
+
+#define _stp_dbug(func, line, fmt, args...) ({				\
+			printk("stp_dbug in [%s] at line %d : ", func, line);	\
+			printk(fmt, ##args);				\
 		})
 
 #define _dbug(args...) _stp_dbug(__FUNCTION__, __LINE__, args)

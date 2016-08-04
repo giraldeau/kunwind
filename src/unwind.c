@@ -21,8 +21,6 @@
 #include "unwind/unwind.h"
 
 /* WARNING: leftovers from stp */
-#define _stp_warn printk
-
 static int
 stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
 			    unsigned long *vm_start, unsigned long *vm_end,
@@ -394,11 +392,11 @@ static int processCFI(const u8 *start, const u8 *end, unsigned long targetLoc,
 				value = get_uleb128(&ptr.p8, end);
 				value2 = get_uleb128(&ptr.p8, end);
 				if (compat_task) {
-					dbug_unwind(1, "map DW_CFA_val_offset value %ld to reg_info idx %ld\n, with offset: %ld",
+					dbug_unwind(1, "map DW_CFA_val_offset value %ld to reg_info idx %ld\n, with offset: %ld\n",
 						    value, COMPAT_REG_MAP(DWARF_REG_MAP(value)), value2);
 					value = COMPAT_REG_MAP(DWARF_REG_MAP(value));
 				} else {
-					dbug_unwind(1, "map DW_CFA_val_offset value %ld to reg_info idx %ld\n, with offset: %ld",
+					dbug_unwind(1, "map DW_CFA_val_offset value %ld to reg_info idx %ld\n, with offset: %ld\n",
 						    value, DWARF_REG_MAP(value), value2);
 					value = DWARF_REG_MAP(value);
 				}
@@ -803,7 +801,7 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 		return NULL;
 	}
 
-	dbug_unwind(1, "binary search for %lx", pc);
+	dbug_unwind(1, "binary search for %lx\n", pc);
 
 	/* table_enc */
 	switch (hdr[3] & DW_EH_PE_FORM) {
@@ -878,7 +876,7 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 			fde = m->debug_frame + off;
 	}
 
-	dbug_unwind(1, "returning fde=%lx startLoc=%lx", (unsigned long) fde, startLoc);
+	dbug_unwind(1, "returning fde=%lx startLoc=%lx\n", (unsigned long) fde, startLoc);
 	return fde;
 }
 
@@ -1207,7 +1205,7 @@ static int unwind_frame(struct unwind_context *context,
 	if (unlikely(table_len == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
 		// might actually not be there.
-		dbug_unwind(1, "Module %s: no unwind frame data", m->path);
+		dbug_unwind(1, "Module %s: no unwind frame data\n", m->path);
 		goto err;
 	}
 	if (unlikely(table_len & (sizeof(*fde) - 1))) {
@@ -1508,7 +1506,7 @@ int unwind(struct unwind_context *context, int user,
 	   values on 64-bit registers. */
 	int compat_task = _stp_is_compat_task();
 
-	dbug_unwind(1, "pc=%lx, %llx", pc,
+	dbug_unwind(1, "pc=%lx, %llx\n", pc,
 		    (unsigned long long) UNW_PC(frame));
 
 	if (UNW_PC(frame) == 0)
@@ -1549,7 +1547,7 @@ int unwind(struct unwind_context *context, int user,
                 _stp_warn ("Missing unwind data for a module, rerun with 'stap -d %s'\n",
                            module_name ?: "(unknown; retry with -DDEBUG_UNWIND)");
 		// Don't _stp_warn including the pc#, since it'll defeat warning deduplicator
-		dbug_unwind(1, "No module found for pc=%lx", pc);
+		dbug_unwind(1, "No module found for pc=%lx\n", pc);
 		return -EINVAL;
 	}
 
