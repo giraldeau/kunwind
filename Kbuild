@@ -1,4 +1,4 @@
-EXTRA_CFLAGS := -I$(src)/include
+EXTRA_CFLAGS := -I$(src)/include -DDEBUG_UNWIND=20
 
 obj-$(CONFIG_KUNWIND) := kunwind.o
 kunwind-y := src/kunwind.o

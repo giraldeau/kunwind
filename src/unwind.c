@@ -30,8 +30,10 @@ stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
 {
 	if (!kunw_mod)
 		return -ESRCH;
-	*vm_start = kunw_mod->vma_start;
-	*vm_end = kunw_mod->vma_end;
+	if (vm_start)
+		*vm_start = kunw_mod->vma_start;
+	if (vm_end)
+		*vm_end = kunw_mod->vma_end;
 	// TODO fill or remove remove other fields?
 	return 0;
 }

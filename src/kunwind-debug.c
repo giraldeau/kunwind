@@ -51,7 +51,7 @@ static int complete_load_info(struct load_info *linfo,
 				hdr_addr, 1, proc->compat, -1);
 		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
 			eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
-		eh = (void *)(eh_addr - mod->vma_start + mod->base);
+		eh = (void *)(eh_addr + mod->base);
 		ptr = eh;
 		do {
 			cie_fde_size = *((u32 *) ptr);
@@ -64,7 +64,8 @@ static int complete_load_info(struct load_info *linfo,
 		} while (cie_fde_size);
 		eh_len = (unsigned long) ptr - (unsigned long) eh;
 
-		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr = eh_addr;
+		mod->stp_mod.eh_frame_addr = eh_addr;
+		linfo->eh_frame_addr = eh_addr + mod->vma_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size = eh_len;
 		mod->stp_mod.eh_frame = eh;
 	}
@@ -115,13 +116,13 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->pages = pages;
 	mod->npages = npages;
 	// eh_frame_hdr info
-	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr;
+	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->vma_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
-	mod->stp_mod.unwind_hdr = linfo->eh_frame_hdr_addr - mod->vma_start + mod->base;
+	mod->stp_mod.unwind_hdr = mod->base + mod->stp_mod.unwind_hdr_addr;
 	// eh_frame info
-	mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr;
+	mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->vma_start;
 	mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
-	mod->stp_mod.eh_frame = linfo->eh_frame_addr - mod->vma_start + mod->base;
+	mod->stp_mod.eh_frame = mod->base + mod->stp_mod.eh_frame_addr;
 
 	// section info (dynamic/absolute)
 	section = kmalloc(sizeof(struct _stp_section), GFP_KERNEL);
@@ -280,7 +281,8 @@ static long kunwind_unwind_ioctl(struct file *file,
 	back->capacity = capacity;
 	err = unwind_full(&context, mods, back->backtrace, back->capacity, &(back->size));
 
-	WARN(err, "Error happened while unwinding");
+	if (err)
+		printk("Error happened while unwinding\n");
 
 	if (copy_to_user(uback, back, struct_size)) {
 		err = -EFAULT;

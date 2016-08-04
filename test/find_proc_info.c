@@ -47,6 +47,7 @@ static int extract_unwind_info(struct dl_phdr_info *info,
 	elem->info.obj_addr = addr = info->dlpi_addr;
 	elem->info.eh_frame_hdr_addr = addr + eh_phdr->p_vaddr;
 	elem->info.eh_frame_hdr_size = eh_phdr->p_memsz;
+	elem->info.dynamic = dynamic;
 	elem->next = NULL;
 
 	// Add to list
