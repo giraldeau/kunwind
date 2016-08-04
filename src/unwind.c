@@ -1579,11 +1579,15 @@ int unwind_full(struct unwind_context *context,
 {
 	int err;
 	*size = 0;
+	if (!ip_buf_len)
+		return -EINVAL;
+	*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;
+	ip_buf++, (*size)++, ip_buf_len--;
 	while (ip_buf_len) {
-		*ip_buf = UNW_PC(&(context->info));
-		printk("size %d, ip %p, ip_buf_len %d\n", *size, *ip_buf, ip_buf_len);
 		err = unwind(context, 1, proc);
-		if (err || !*ip_buf) break;
+		*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;
+		dbug_unwind(1, "size %d, ip %p, ip_buf_len %d\n", *size, (void *)*ip_buf, ip_buf_len);
+		if (err || !*ip_buf || !UNW_PC(&(context->info))) break;
 		ip_buf++, (*size)++, ip_buf_len--;
 	}
 
