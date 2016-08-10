@@ -18,6 +18,7 @@ void foo3(void)
 	struct kunwind_backtrace *back = malloc(size);
 	back->capacity = DEPTH;
 	back->size = 0;
+	printf("Calling unwinding from userspace\n");
 	int err = ioctl(fileno(out), KUNWIND_UNWIND_IOCTL, back);
 	if (err) perror("Error while unwinding");
 	for (int i = 0; i < back->size && i < DEPTH; ++i) {
@@ -28,12 +29,13 @@ void foo3(void)
 	backtrace_symbols_fd((void* const *)back->backtrace,
 			     MIN(back->size, DEPTH),
 			     STDOUT_FILENO);
+	printf("End of unwinding from userspace\n");
 
 }
 
 void foo2(void)
 {
-	foo3();
+  for (int i = 0; i < 2; ++i) foo3();
 }
 
 void foo1(void)

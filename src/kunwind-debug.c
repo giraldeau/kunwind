@@ -267,6 +267,11 @@ static long kunwind_unwind_ioctl(struct file *file,
 	int err;
 	u32 capacity, struct_size;
 	struct unwind_context context;
+	struct pt_regs regs;
+
+	int i;
+
+	printk("Starting kunwind unwinding\n");
 
 	if (get_user(capacity, (typeof(capacity)*) uback))
 		return -EFAULT;
@@ -277,7 +282,12 @@ static long kunwind_unwind_ioctl(struct file *file,
 	if (!back)
 		return -ENOMEM;
 
-	context.info.regs = *current_pt_regs();
+	memset(&context, 0, sizeof(context));
+	regs = *current_pt_regs();
+	for (i = 0; i < 17; ++i) {
+		printk( "-> reg %d : %lx\n", i, ((unsigned long *) &regs)[reg_info[i].offs]);
+	}
+	arch_unw_init_frame_info(&context.info, &regs, 0);
 	back->capacity = capacity;
 	err = unwind_full(&context, mods, back->backtrace, back->capacity, &(back->size));
 
@@ -288,6 +298,8 @@ static long kunwind_unwind_ioctl(struct file *file,
 		err = -EFAULT;
 		goto KUNWIND_UNWIND_IOCTL_ERR;
 	}
+
+	printk("Ending kunwind unwinding\n");
 
 	kfree(back);
 	return 0;

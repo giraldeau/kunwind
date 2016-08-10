@@ -1304,6 +1304,12 @@ static int unwind_frame(struct unwind_context *context,
 		goto err;
 	}
 
+	// Debug register values
+	printk("-- register values --\n");
+	for (i = 0; i < ARRAY_SIZE(REG_STATE.regs); ++i) {
+		printk("    register %d : %lx\n", i, FRAME_REG(i, unsigned long));
+	}
+
 	frame->call_frame = call_frame;
 	state->stackDepth = 0;
 	state->loc = startLoc;
