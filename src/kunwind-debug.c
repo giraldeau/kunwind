@@ -87,6 +87,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	struct _stp_section *section;
 
 	// TODO fill if necessary or remove
+	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
 	mod->stp_mod.name = "";
 	mod->stp_mod.path = "";
 
@@ -250,6 +251,13 @@ static long kunwind_proc_info_ioctl(struct file *file,
 		}
 		list_add_tail(&(mod->list), &(mods->stp_modules));
 	}
+
+	// This is a small hack to go through the slowpath for the
+	// unwinding ioctls that need all the registers, but it
+	// probably adds unnecessary overhead. lttng has
+	// TIF_KERNEL_TRACE, see
+	// http://lkml.iu.edu/hypermail/linux/kernel/0903.1/03592.html
+	current_thread_info()->flags |= _TIF_SYSCALL_AUDIT;
 
 	kfree(pinfo);
 	return 0;
