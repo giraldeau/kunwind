@@ -37,33 +37,20 @@ static int complete_load_info(struct load_info *linfo,
 	}
 
 	if (!linfo->eh_frame_addr || !linfo->eh_frame_size || incomplete) {
-		u8 *eh, *hdr, *ptr;
-		const u8 *pos;
-		unsigned long eh_addr, eh_len, hdr_addr, hdr_len, cie_fde_size = 0;
+		u8 *eh, *hdr;
+		unsigned long eh_addr, eh_len, hdr_addr, hdr_len;
+		int err;
 
 		// Use the .eh_frame_hdr pointer to find the .eh_frame section
 		hdr = mod->stp_mod.unwind_hdr;
 		hdr_addr = mod->stp_mod.unwind_hdr_addr;
 		hdr_len = mod->stp_mod.unwind_hdr_len;
 
-		// FIXME -1 tablesize might not be right in following call
-		pos = hdr + 4;
-		eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], mod->vma_start,
-				hdr_addr, 1, proc->compat, -1);
-		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
-			eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
-		eh = (void *)(eh_addr + mod->base);
-		ptr = eh;
-		do {
-			cie_fde_size = *((u32 *) ptr);
-			ptr += 4;
-			if (cie_fde_size == 0xffffffff) {
-				cie_fde_size = *((u64 *) ptr);
-				ptr += 8;
-			}
-			ptr += cie_fde_size;
-		} while (cie_fde_size);
-		eh_len = (unsigned long) ptr - (unsigned long) eh;
+		err =  eh_frame_from_hdr(mod->base, mod->vma_start, mod->vma_end, proc->compat,
+					 hdr, hdr_addr, hdr_len,
+					 &eh, &eh_addr, &eh_len);
+
+		if (err) return err;
 
 		mod->stp_mod.eh_frame_addr = eh_addr;
 		linfo->eh_frame_addr = eh_addr + mod->vma_start;
