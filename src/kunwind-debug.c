@@ -72,7 +72,6 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	struct page **pages;
 	struct vm_area_struct *vma;
 	unsigned long test;
-	struct _stp_section *section;
 
 	// TODO fill if necessary or remove
 	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
@@ -113,15 +112,9 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
 	mod->stp_mod.eh_frame = mod->base + mod->stp_mod.eh_frame_addr;
 
-	// section info (dynamic/absolute)
-	section = kmalloc(sizeof(struct _stp_section), GFP_KERNEL);
-	if (!section)
-		return -ENOMEM; // FIXME free resources correctly
-	memset(section, 0, sizeof(*section));
-	section->name = linfo->dynamic ? ".dynamic" : ".absolute";
-	section->static_addr = 0; // FIXME what's that
-	mod->stp_mod.sections = section;
-	mod->stp_mod.num_sections = 1;
+	//  dynamic/absolute
+	mod->stp_mod.is_dynamic = linfo->dynamic;
+	mod->stp_mod.static_addr = vma->vm_start;
 
 	res = complete_load_info(linfo, mod, proc);
 	if (res) return res;
@@ -149,9 +142,6 @@ static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 	mod->npages = 0;
 	mod->pages = NULL;
 	mod->vma_start = 0;
-
-	kfree(mod->stp_mod.sections);
-	mod->stp_mod.num_sections = 0;
 }
 
 static int init_proc_unwind_info(struct kunwind_proc_modules *mods,

@@ -49,22 +49,12 @@ static inline int _stp_is_compat_task(void)
 
 #endif /* CONFIG_COMPAT */
 
-struct _stp_section {
-        const char *name;
-        unsigned long static_addr; /* XXX non-null if everywhere the same. */
-
-	/* Synthesized index for .debug_frame table, keep section
-	   offset to adjust addresses relative to load address. */
-	void *debug_hdr;
-	uint32_t debug_hdr_len;
-	unsigned long sec_load_offset;
-};
-
 struct _stp_module {
         const char* name; /* module name (kernel) or /canonical/path for userspace*/
         const char* path; /* canonical filesystem path (kernel .ko or user) */
-	struct _stp_section *sections;
-  	unsigned num_sections;
+
+	int is_dynamic;
+	unsigned long static_addr;
 
 	/* The .eh_frame unwind data for this module.
 	   Note index for .debug_frame (hdr) is per section. */
