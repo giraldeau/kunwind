@@ -18,6 +18,7 @@
 #include "kunwind-debug.h"
 #include "kunwind-bug.h"
 #include "unwind/unwind.h"
+#include "debug.h"
 
 #define PROC_FILENAME "kunwind_debug"
 
@@ -108,7 +109,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 
 	// vmap the pages so that we can access eh_frame directly
 	base = vmap(pages, npages, vma->vm_flags, vma->vm_page_prot);
-	printk("vmap kernel addr: %p\n", base);
+	dbug_unwind(1, "vmap kernel addr: %p\n", base);
 
 	// bookkeeping info
 	mod->base = base;
@@ -138,16 +139,12 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	res = complete_load_info(linfo, mod, proc);
 	if (res) return res;
 
-	printk("Eh frame hdr addr = %#lx, len = %#lx\n", linfo->eh_frame_addr, linfo->eh_frame_size);
+	dbug_unwind(1, "Eh frame hdr addr = %#lx, len = %#lx\n", linfo->eh_frame_addr, linfo->eh_frame_size);
 
-	// debug
-	printk("npages %ld, flags %lx, prot %lx\n", npages, vma->vm_flags, vma->vm_page_prot);
 	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
 	if (res < 0) return res;
 	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr))
 		KUNWIND_BUGM("Bad eh_frame virtual kernel address.");
-	else
-		printk("SUCCESS!\n");
 
 	return 0;
 }
@@ -155,7 +152,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
-	printk("vunmap kernel addr: %p\n", mod->base);
+	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->base);
 	vunmap(mod->base);
 	mod->base = NULL;
 	for (i = 0; i < mod->npages; ++i) {
@@ -214,7 +211,6 @@ static int kunwind_debug_open(struct inode *inode, struct file *file)
 
 static int kunwind_debug_release(struct inode *inode, struct file *file)
 {
-	printk("Starting to release file\n");
 	int err = release_unwind_info(file->private_data);
 	file->private_data = NULL;
 	return err;
@@ -277,9 +273,7 @@ static long kunwind_unwind_ioctl(struct file *file,
 	struct unwind_context context;
 	struct pt_regs regs;
 
-	int i;
-
-	printk("Starting kunwind unwinding\n");
+	dbug_unwind(1, "Starting kunwind unwinding\n");
 
 	if (get_user(capacity, (typeof(capacity)*) uback))
 		return -EFAULT;
@@ -292,9 +286,6 @@ static long kunwind_unwind_ioctl(struct file *file,
 
 	memset(&context, 0, sizeof(context));
 	regs = *current_pt_regs();
-	for (i = 0; i < 17; ++i) {
-		printk( "-> reg %d : %lx\n", i, ((unsigned long *) &regs)[reg_info[i].offs]);
-	}
 	arch_unw_init_frame_info(&context.info, &regs, 0);
 	back->capacity = capacity;
 	err = unwind_full(&context, mods, back->backtrace, back->capacity, &(back->size));
@@ -307,7 +298,7 @@ static long kunwind_unwind_ioctl(struct file *file,
 		goto KUNWIND_UNWIND_IOCTL_ERR;
 	}
 
-	printk("Ending kunwind unwinding\n");
+	dbug_unwind(1, "Ending kunwind unwinding\n");
 
 	kfree(back);
 	return 0;
@@ -319,7 +310,7 @@ KUNWIND_UNWIND_IOCTL_ERR:
 
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
-	printk("file=%p cmd=%x arg=%lx\n", file, cmd, arg);
+	dbug_unwind(1, "ioctl file=%p cmd=%x arg=%lx\n", file, cmd, arg);
 
 	switch (cmd) {
 	case KUNWIND_PROC_INFO_IOCTL:

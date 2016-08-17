@@ -5,37 +5,45 @@
 
 #include <sys/ioctl.h>
 #include <sys/param.h>
+#include <sys/time.h>
 
 #include "find_proc_info.h"
 #include "kunwind.h"
 
 #define DEPTH 10
 static FILE *out;
+static struct kunwind_backtrace bt;
 
-void foo3(void)
+void foo3(int print)
 {
 	unsigned int size = sizeof(struct kunwind_backtrace) + DEPTH * 8;
-	struct kunwind_backtrace *back = malloc(size);
+	struct kunwind_backtrace *back = &bt; // Or do a malloc or pass the struct
 	back->capacity = DEPTH;
 	back->size = 0;
-	printf("Calling unwinding from userspace\n");
+	if (print) printf("Calling unwinding from userspace\n");
 	int err = ioctl(fileno(out), KUNWIND_UNWIND_IOCTL, back);
 	if (err) perror("Error while unwinding");
-	for (int i = 0; i < back->size && i < DEPTH; ++i) {
-		printf("stack frame with ip at %p\n", back->backtrace[i]);
-		backtrace_symbols_fd((void* const *)(&back->backtrace[i]),
-				     1, STDOUT_FILENO);
-	}
-	backtrace_symbols_fd((void* const *)back->backtrace,
-			     MIN(back->size, DEPTH),
-			     STDOUT_FILENO);
-	printf("End of unwinding from userspace\n");
+	if (print)
+		backtrace_symbols_fd((void* const *)back->backtrace,
+				     MIN(back->size, DEPTH),
+				     STDOUT_FILENO);
+	if (print) printf("End of unwinding from userspace\n");
 
 }
 
+#define TOP 1000
+#define PRINT_SET 0
+
 void foo2(void)
 {
-  for (int i = 0; i < 2; ++i) foo3();
+	struct timeval start, end, res;
+	int err = gettimeofday(&start, NULL);
+	if (err) exit(1);
+	for (int i = 0; i < TOP; ++i) foo3(PRINT_SET);
+	err = gettimeofday(&end, NULL);
+	if (err) exit(1);
+	timersub(&end, &start, &res);
+	printf("Timer for %d iterations is %d seconds and %d microseconds\n", TOP, res.tv_sec, res.tv_usec);
 }
 
 void foo1(void)
