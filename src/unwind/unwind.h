@@ -56,12 +56,9 @@ struct _stp_module {
 	int is_dynamic;
 	unsigned long static_addr;
 
-	/* The .eh_frame unwind data for this module.
-	   Note index for .debug_frame (hdr) is per section. */
-	void *debug_frame;
+	// The .eh_frame unwind data for this module.
 	void *eh_frame;
 	void *unwind_hdr;
-	uint32_t debug_frame_len;
 	uint32_t eh_frame_len;
 	uint32_t unwind_hdr_len;
 	unsigned long eh_frame_addr; /* Orig load address (offset) .eh_frame */

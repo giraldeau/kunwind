@@ -938,8 +938,8 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 				   struct _stp_module *m,
 				   int is_ehframe, int user, int compat_task, struct kunwind_stp_module *kunw_mod)
 {
-	const u8 *ptr, *end, *hdr = m->unwind_hdr; // is_ehframe ? m->unwind_hdr: s->debug_hdr;
-	uint32_t hdr_len = m->unwind_hdr_len; // is_ehframe ? m->unwind_hdr_len : s->debug_hdr_len;
+	const u8 *ptr, *end, *hdr = m->unwind_hdr;
+	uint32_t hdr_len = m->unwind_hdr_len;
 	unsigned long startLoc;
 	u32 *fde = NULL;
 	unsigned num, tableSize;
@@ -1022,7 +1022,7 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 		if (is_ehframe)
 			fde = off - m->eh_frame_addr + m->eh_frame;
 		else
-			fde = m->debug_frame + off;
+			fde = m->eh_frame + off;
 	}
 
 	dbug_unwind(1, "returning fde=%lx startLoc=%lx\n", (unsigned long) fde, startLoc);
@@ -1697,16 +1697,10 @@ int unwind(struct unwind_context *context, int user,
 		return -EINVAL;
 	}
 
-	dbug_unwind(1, "trying debug_frame\n");
-	res = unwind_frame (context, m, m->debug_frame,
-			    m->debug_frame_len, 0, user, compat_task,
+	dbug_unwind(1, "trying eh_frame\n", res);
+	res = unwind_frame (context, m, m->eh_frame,
+			    m->eh_frame_len, 1, user, compat_task,
 			    kunw_mod);
-	if (res != 0) {
-	  dbug_unwind(1, "debug_frame failed: %d, trying eh_frame\n", res);
-	  res = unwind_frame (context, m, m->eh_frame,
-			      m->eh_frame_len, 1, user, compat_task,
-			      kunw_mod);
-	}
 
         /* This situation occurs where some unwind data was found, but
            it was lacking somehow.  */
