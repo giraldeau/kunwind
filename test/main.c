@@ -1,31 +1,29 @@
 #include <execinfo.h>
-#include <stdlib.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 
-#include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/time.h>
 
 #include "find_proc_info.h"
-#include "kunwind.h"
+#include "libkunwind.h"
 
 #define DEPTH 10
-static FILE *out;
-static struct kunwind_backtrace bt;
+
+static struct unwind_handle *handle;
+static struct kunwind_backtrace *bt;
 
 void foo3(int print)
 {
-	unsigned int size = sizeof(struct kunwind_backtrace) + DEPTH * 8;
-	struct kunwind_backtrace *back = &bt; // Or do a malloc or pass the struct
-	back->capacity = DEPTH;
-	back->size = 0;
+	kunwind_backtrace_init(bt, DEPTH);
+
 	if (print) printf("Calling unwinding from userspace\n");
-	int err = ioctl(fileno(out), KUNWIND_UNWIND_IOCTL, back);
+	int err = unwind(handle, bt);
 	if (err) perror("Error while unwinding");
 	if (print)
-		backtrace_symbols_fd((void* const *)back->backtrace,
-				     MIN(back->size, DEPTH),
+		backtrace_symbols_fd((void* const *)bt->backtrace,
+				     MIN(bt->size, bt->capacity),
 				     STDOUT_FILENO);
 	if (print) printf("End of unwinding from userspace\n");
 
@@ -58,15 +56,16 @@ void foo(void)
 
 int main(int argc, char **argv)
 {
-	// Write proc info to file
-	out = fopen("/proc/kunwind_debug", "r+");
-	if (!out) {
-		perror("Failed to open file");
+	struct proc_info *proc_info = find_proc_info();
+	handle = malloc(unwind_handle_struct_size());
+	int err = init_unwind_proc_info(handle, proc_info);
+
+	if (err) {
+		perror("Unwinding initialization");
 		return 1;
 	}
 
-	struct proc_info *proc_info = find_proc_info();
-	ioctl(fileno(out), KUNWIND_PROC_INFO_IOCTL, proc_info);
+	bt = malloc(kunwind_backtrace_struct_size(DEPTH));
 
 	foo();
 

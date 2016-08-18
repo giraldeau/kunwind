@@ -1,13 +1,14 @@
 CC=gcc
-CFLAGS=-g -I../include -rdynamic
-SRCS=main.c find_proc_info.c
+CFLAGS=-g -I../libkunwind/include -I../include -rdynamic
+LDFLAGS=-lkunwind
+SRCS=main.c
 OBJS := ${SRCS:.c=.o}
 PROGNAME=test
 
 all : $(PROGNAME)
 
 $(PROGNAME) : $(OBJS)
-	$(CC) $(CFLAGS) $(OBJS) -o $@
+	$(CC) $(CFLAGS) $(LDFLAGS) $(OBJS) -o $@
 
 clean:
 	rm -f $(PROGNAME) $(OBJS) .depend
