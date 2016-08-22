@@ -1697,7 +1697,7 @@ int unwind(struct unwind_context *context, int user,
 		return -EINVAL;
 	}
 
-	dbug_unwind(1, "trying eh_frame\n", res);
+	dbug_unwind(1, "trying eh_frame\n");
 	res = unwind_frame (context, m, m->eh_frame,
 			    m->eh_frame_len, 1, user, compat_task,
 			    kunw_mod);

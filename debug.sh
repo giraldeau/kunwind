@@ -31,6 +31,7 @@ sudo mount linux.img mnt/
 mkdir -p mnt/opt
 sudo chown $USER mnt/opt
 cp test/test mnt/opt
+sudo cp -p /usr/local/lib/libkunwind* mnt/usr/local/lib/
 cp -p ./start.sh mnt/opt
 cp -p ./kunwind-debug.ko mnt/opt/
 cp -p ./kunwind.ko mnt/opt/

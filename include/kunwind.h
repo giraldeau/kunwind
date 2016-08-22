@@ -10,14 +10,14 @@ struct kunwind_backtrace {
 	__u64 backtrace[0];
 };
 
-static
+static inline
 unsigned int kunwind_backtrace_struct_size(unsigned int depth)
 {
 	struct kunwind_backtrace* p = ((void *)0);
 	return sizeof(*p) + depth * sizeof(p->backtrace[0]);
 }
 
-static
+static inline
 void kunwind_backtrace_init(struct kunwind_backtrace* backtrace,
 			    unsigned int depth)
 {
