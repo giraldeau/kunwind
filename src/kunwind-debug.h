@@ -12,6 +12,7 @@ struct kunwind_stp_module {
 	struct _stp_module stp_mod;
 	struct list_head list;
 	void *base;
+	struct vm_area_struct *vma;
 	unsigned long vma_start;
 	unsigned long vma_end; // TODO set this
 	struct page **pages;

@@ -901,7 +901,7 @@ adjustStartLoc (unsigned long startLoc,
   /* XXX - some, or all, of this should really be done by
      _stp_module_relocate and/or read_pointer. */
   dbug_unwind(2, "adjustStartLoc=%lx, ptrType=%s, m=%s, dynamic=%d eh=%d\n",
-	      startLoc, _stp_eh_enc_name(ptrType), m->path, m->is_dynamic, is_ehframe);
+	      startLoc, _stp_eh_enc_name(ptrType), m->path ?: "", m->is_dynamic, is_ehframe);
   if (startLoc == 0
       //|| strcmp (m->name, "kernel")  == 0 // FIXME will we support unwinding of kernel code
       || (!m->is_dynamic && !is_ehframe))
@@ -1354,11 +1354,11 @@ static int unwind_frame(struct unwind_context *context,
 	if (unlikely(table_len == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
 		// might actually not be there.
-		dbug_unwind(1, "Module %s: no unwind frame data\n", m->path);
+		dbug_unwind(1, "Module %s: no unwind frame data\n", m->path ?: "");
 		goto err;
 	}
 	if (unlikely(table_len & (sizeof(*fde) - 1))) {
-		_stp_warn("Module %s: frame_len=%d", m->path, table_len);
+		_stp_warn("Module %s: frame_len=%d", m->path ?: "", table_len);
 		goto err;
 	}
 
@@ -1370,12 +1370,12 @@ static int unwind_frame(struct unwind_context *context,
 		set_no_state_rule(i, Nowhere, state);
 
 	fde = _stp_search_unwind_hdr(pc, m, is_ehframe, user, compat_task, kunw_mod);
-	dbug_unwind(1, "%s: fde=%lx\n", m->path, (unsigned long) fde);
+	dbug_unwind(1, "%s: fde=%lx\n", m->path ?: "", (unsigned long) fde);
 
 	/* found the fde, now set startLoc and endLoc */
 	if (fde != NULL && is_fde(fde, table, table_len, is_ehframe)) {
 		cie = cie_for_fde(fde, table, table_len, is_ehframe);
-		dbug_unwind(1, "%s: cie=%lx\n", m->path, (unsigned long) cie);
+		dbug_unwind(1, "%s: cie=%lx\n", m->path ?: "", (unsigned long) cie);
 		if (likely(cie != NULL)) {
 			if (parse_fde_cie(fde, cie, table, table_len,
 					  &ptrType, user,
@@ -1405,7 +1405,7 @@ static int unwind_frame(struct unwind_context *context,
 	       if it didn't exist. These should never be missing except
 	       when there are toolchain bugs. */
 	    unsigned long tableSize;
-	    _stp_warn("No binary search table for %s frame, doing slow linear search for %s\n", (is_ehframe ? "eh" : "debug"), m->path);
+	    _stp_warn("No binary search table for %s frame, doing slow linear search for %s\n", (is_ehframe ? "eh" : "debug"), m->path ?: "");
 	    for (fde = table, tableSize = table_len; cie = NULL, tableSize > sizeof(*fde)
 		 && tableSize - sizeof(*fde) >= *fde; tableSize -= sizeof(*fde) + *fde, fde += 1 + *fde / sizeof(*fde)) {
 			dbug_unwind(3, "fde=%lx tableSize=%d\n", (long)*fde, (int)tableSize);

@@ -50,8 +50,10 @@ static inline int _stp_is_compat_task(void)
 #endif /* CONFIG_COMPAT */
 
 struct _stp_module {
-        const char* name; /* module name (kernel) or /canonical/path for userspace*/
-        const char* path; /* canonical filesystem path (kernel .ko or user) */
+	const char* name; /* module name (kernel) or /canonical/path for userspace*/
+	char* path; /* canonical filesystem path (kernel .ko or user) */
+	char* buf; /* buffer for the path (it can start after the
+		    * beginning */
 
 	int is_dynamic;
 	unsigned long static_addr;
