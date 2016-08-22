@@ -37,13 +37,13 @@ static char *vma_file_path(struct vm_area_struct *vma, char *buf, unsigned int b
 	return path;
 }
 
-static int complete_load_info(struct load_info *linfo,
-		struct kunwind_stp_module *mod,
-		struct kunwind_proc_modules *proc)
+static int complete_load_info(struct kunwind_stp_module *mod,
+			      struct kunwind_proc_modules *proc)
 {
 	bool incomplete = false;
 
-	if (!mod->stp_mod.path || !strlen(mod->stp_mod.path)) {
+	if (!mod->stp_mod.path ||
+	    !strnlen(mod->stp_mod.path, LINFO_PATHLEN)) {
 		char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
 		if (!buf)
 			return -ENOMEM;
@@ -58,7 +58,9 @@ static int complete_load_info(struct load_info *linfo,
 		}
 	}
 
-	if (!linfo->eh_frame_hdr_addr || !linfo->eh_frame_hdr_size) {
+	if (!mod->stp_mod.unwind_hdr_addr ||
+	    !mod->stp_mod.unwind_hdr_len ||
+	    !mod->stp_mod.unwind_hdr) {
 		// Do the equivalent of dl_iterate_phdr using the Ehdr
 		// see http://stackoverflow.com/a/38618657/2041995
 		// Except we already have the executable vma
@@ -66,7 +68,10 @@ static int complete_load_info(struct load_info *linfo,
 		incomplete = true;
 	}
 
-	if (!linfo->eh_frame_addr || !linfo->eh_frame_size || incomplete) {
+	if (!mod->stp_mod.eh_frame_addr ||
+	    !mod->stp_mod.eh_frame_len ||
+	    !mod->stp_mod.eh_frame ||
+	    incomplete) {
 		u8 *eh, *hdr;
 		unsigned long eh_addr, eh_len, hdr_addr, hdr_len;
 		int err;
@@ -83,8 +88,7 @@ static int complete_load_info(struct load_info *linfo,
 		if (err) return err;
 
 		mod->stp_mod.eh_frame_addr = eh_addr;
-		linfo->eh_frame_addr = eh_addr + mod->vma_start;
-		mod->stp_mod.eh_frame_len = linfo->eh_frame_size = eh_len;
+		mod->stp_mod.eh_frame_len = eh_len;
 		mod->stp_mod.eh_frame = eh;
 	}
 
@@ -153,7 +157,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->stp_mod.is_dynamic = linfo->dynamic;
 	mod->stp_mod.static_addr = vma->vm_start;
 
-	res = complete_load_info(linfo, mod, proc);
+	res = complete_load_info(mod, proc);
 	if (res) goto FREEPAGES;
 
 	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
