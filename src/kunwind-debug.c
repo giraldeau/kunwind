@@ -19,23 +19,10 @@
 #include "kunwind-bug.h"
 #include "unwind/unwind.h"
 #include "debug.h"
+#include "vma_file_path.h"
 
 #define PROC_FILENAME "kunwind_debug"
 
-static char *vma_file_path(struct vm_area_struct *vma, char *buf, unsigned int buflen)
-{
-	char *path;
-
-	struct file *file = vma->vm_file;
-	if (!file) return NULL;
-
-	path = dentry_path_raw(file->f_path.dentry, buf, buflen);
-
-	if (IS_ERR(path))
-		return NULL;
-
-	return path;
-}
 
 static int complete_load_info(struct kunwind_stp_module *mod,
 			      struct kunwind_proc_modules *proc)
