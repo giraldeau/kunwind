@@ -1,3 +1,4 @@
+#include <linux/elf.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/kernel.h>
@@ -20,65 +21,50 @@
 #include "unwind/unwind.h"
 #include "debug.h"
 #include "vma_file_path.h"
+#include "iterate_phdr.h"
 
 #define PROC_FILENAME "kunwind_debug"
 
 
-static int complete_load_info(struct kunwind_stp_module *mod,
-			      struct kunwind_proc_modules *proc)
+static int fill_eh_frame_info(struct kunwind_stp_module *mod,
+				struct kunwind_proc_modules *proc)
 {
-	bool incomplete = false;
+	u8 *eh, *hdr;
+	unsigned long eh_addr, eh_len, hdr_addr, hdr_len;
+	int err;
 
-	if (!mod->stp_mod.path ||
-	    !strnlen(mod->stp_mod.path, LINFO_PATHLEN)) {
-		char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-		if (!buf)
-			return -ENOMEM;
-		path = vma_file_path(mod->vma, buf, LINFO_PATHLEN);
-		if (path) {
-			if (mod->stp_mod.buf)
-				kfree(mod->stp_mod.buf);
-			mod->stp_mod.buf = buf;
-			mod->stp_mod.path = path;
-		} else {
-			kfree(buf);
-		}
+	// Use the .eh_frame_hdr pointer to find the .eh_frame section
+	hdr = mod->stp_mod.unwind_hdr;
+	hdr_addr = mod->stp_mod.unwind_hdr_addr;
+	hdr_len = mod->stp_mod.unwind_hdr_len;
+
+	err =  eh_frame_from_hdr(mod->base, mod->vma_start,
+				 mod->vma_end, proc->compat,
+				 hdr, hdr_addr, hdr_len,
+				 &eh, &eh_addr, &eh_len);
+
+	if (err) return err;
+
+	mod->stp_mod.eh_frame_addr = eh_addr;
+	mod->stp_mod.eh_frame_len = eh_len;
+	mod->stp_mod.eh_frame = eh;
+
+	return 0;
+}
+
+static int fill_mod_path(struct kunwind_stp_module *mod)
+{
+	char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
+	if (!buf)
+		return -ENOMEM;
+	path = vma_file_path(mod->vma, buf, LINFO_PATHLEN);
+	if (path) {
+		kfree(mod->stp_mod.buf);
+		mod->stp_mod.buf = buf;
+		mod->stp_mod.path = path;
+	} else {
+		kfree(buf);
 	}
-
-	if (!mod->stp_mod.unwind_hdr_addr ||
-	    !mod->stp_mod.unwind_hdr_len ||
-	    !mod->stp_mod.unwind_hdr) {
-		// Do the equivalent of dl_iterate_phdr using the Ehdr
-		// see http://stackoverflow.com/a/38618657/2041995
-		// Except we already have the executable vma
-
-		incomplete = true;
-	}
-
-	if (!mod->stp_mod.eh_frame_addr ||
-	    !mod->stp_mod.eh_frame_len ||
-	    !mod->stp_mod.eh_frame ||
-	    incomplete) {
-		u8 *eh, *hdr;
-		unsigned long eh_addr, eh_len, hdr_addr, hdr_len;
-		int err;
-
-		// Use the .eh_frame_hdr pointer to find the .eh_frame section
-		hdr = mod->stp_mod.unwind_hdr;
-		hdr_addr = mod->stp_mod.unwind_hdr_addr;
-		hdr_len = mod->stp_mod.unwind_hdr_len;
-
-		err =  eh_frame_from_hdr(mod->base, mod->vma_start, mod->vma_end, proc->compat,
-					 hdr, hdr_addr, hdr_len,
-					 &eh, &eh_addr, &eh_len);
-
-		if (err) return err;
-
-		mod->stp_mod.eh_frame_addr = eh_addr;
-		mod->stp_mod.eh_frame_len = eh_len;
-		mod->stp_mod.eh_frame = eh;
-	}
-
 	return 0;
 }
 
@@ -93,16 +79,10 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	struct page **pages;
 	struct vm_area_struct *vma;
 	unsigned long test;
-	char *path;
+	char *path = 0;
 
 	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
 	mod->stp_mod.name = ""; // TODO fill if necessary or remove
-
-	path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-	if (!path)
-		return -ENOMEM;
-	strncpy(path, linfo->path, LINFO_PATHLEN);
-	mod->stp_mod.buf = mod->stp_mod.path = path;
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
@@ -117,11 +97,13 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	}
 
 	res = __get_user_pages_unlocked(task, task->mm, vma->vm_start,
-			npages, 0, 0, pages, FOLL_REMOTE | FOLL_TOUCH);
+			npages, 0, 0, pages, FOLL_TOUCH);
 	if (res < 0) goto FREEPAGES;
 	npages = res;
 
-	// vmap the pages so that we can access eh_frame directly
+	// Vmap the pages so that we can access eh_frame directly.  We
+	// map the full vma because it was easier to write, but we
+	// should only vmap the pages containing unwinding info. TODO
 	base = vmap(pages, npages, vma->vm_flags, vma->vm_page_prot);
 	dbug_unwind(1, "vmap kernel addr: %p\n", base);
 
@@ -135,21 +117,33 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->vma_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
 	mod->stp_mod.unwind_hdr = mod->base + mod->stp_mod.unwind_hdr_addr;
-	// eh_frame info
-	mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->vma_start;
-	mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
-	mod->stp_mod.eh_frame = mod->base + mod->stp_mod.eh_frame_addr;
-
 	//  dynamic/absolute
 	mod->stp_mod.is_dynamic = linfo->dynamic;
 	mod->stp_mod.static_addr = vma->vm_start;
 
-	res = complete_load_info(mod, proc);
-	if (res) goto FREEPAGES;
+	// eh_frame info
+	if (!linfo->eh_frame_addr || !linfo->eh_frame_size) {
+		res = fill_eh_frame_info(mod, proc);
+		if (res) goto FREEPAGES;
+	} else {
+		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->vma_start;
+		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
+		mod->stp_mod.eh_frame = mod->base + mod->stp_mod.eh_frame_addr;
+	}
+
+	// Module path
+	if (strnlen(linfo->path, LINFO_PATHLEN)) {
+		path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
+		if (!path)
+			return -ENOMEM;
+		strncpy(path, linfo->path, LINFO_PATHLEN);
+		mod->stp_mod.buf = mod->stp_mod.path = path;
+	} else {
+		res = fill_mod_path(mod);
+		if (res) return res;
+	}
 
 	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
-
-	dbug_unwind(1, "Eh frame hdr addr = %#llx, len = %#llx\n", linfo->eh_frame_addr, linfo->eh_frame_size);
 
 	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
 	if (res < 0) goto FREEPAGES;
@@ -232,6 +226,59 @@ static int kunwind_debug_release(struct inode *inode, struct file *file)
 	return err;
 }
 
+#define ElfW(smt) Elf64_##smt
+static int add_module(struct phdr_info *info, void *data)
+{
+	struct kunwind_proc_modules *mods = data;
+	struct load_info linfo = { 0 };
+	const ElfW(Phdr) *eh_phdr = NULL;
+	bool dynamic = false;
+	ElfW(Phdr) *phdr_arr = info->phdr;
+	int i, err = 0;
+	struct kunwind_stp_module *mod;
+
+	for (i = 0; i < info->phnum; ++i) {
+		if (phdr_arr[i].p_type == PT_GNU_EH_FRAME) {
+			eh_phdr = &phdr_arr[i];
+		} else if (phdr_arr[i].p_type == PT_DYNAMIC) {
+			dynamic = true;
+		}
+		if (eh_phdr && dynamic)
+			break;
+	}
+
+	if (!eh_phdr)
+		// No module added but we can still try to unwind
+		return 0;
+
+	// Fill linfo
+	linfo.obj_addr = info->addr;
+	linfo.eh_frame_hdr_addr = info->addr + eh_phdr->p_vaddr;
+	linfo.eh_frame_hdr_size = eh_phdr->p_memsz;
+	linfo.dynamic = dynamic;
+
+	mod = kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
+	if (!mod)
+		return -ENOMEM;
+	err = init_kunwind_stp_module(current, &linfo, mod, mods);
+	if (err) {
+		kfree(mod); // Free the module not added to the list
+		return err;
+	}
+
+	list_add_tail(&(mod->list), &(mods->stp_modules));
+	return 0;
+}
+#undef ElfW
+
+static long kunwind_init_ioctl(struct file *file)
+{
+	struct kunwind_proc_modules *mods = file->private_data;
+
+	return iterate_phdr(&add_module, current, mods);
+}
+
+
 static long kunwind_proc_info_ioctl(struct file *file,
 		const struct proc_info __user *upinfo)
 {
@@ -239,6 +286,16 @@ static long kunwind_proc_info_ioctl(struct file *file,
 	struct proc_info *pinfo;
 	int i, err;
 	u32 size;
+
+	// This is a small hack to go through the slowpath for the
+	// unwinding ioctls that need all the registers, but it
+	// probably adds unnecessary overhead. lttng has
+	// TIF_KERNEL_TRACE, see
+	// http://lkml.iu.edu/hypermail/linux/kernel/0903.1/03592.html
+	current_thread_info()->flags |= _TIF_SYSCALL_AUDIT;
+
+	if (!upinfo)
+		return kunwind_init_ioctl(file);
 
 	if (get_user(size, (typeof(size)*) upinfo))
 		return -EFAULT;
@@ -263,13 +320,6 @@ static long kunwind_proc_info_ioctl(struct file *file,
 		}
 		list_add_tail(&(mod->list), &(mods->stp_modules));
 	}
-
-	// This is a small hack to go through the slowpath for the
-	// unwinding ioctls that need all the registers, but it
-	// probably adds unnecessary overhead. lttng has
-	// TIF_KERNEL_TRACE, see
-	// http://lkml.iu.edu/hypermail/linux/kernel/0903.1/03592.html
-	current_thread_info()->flags |= _TIF_SYSCALL_AUDIT;
 
 	kfree(pinfo);
 	return 0;

@@ -14,6 +14,7 @@ int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
 	int res = 0, err = 0;
 	struct page *page; // FIXME Is one page enough for all phdrs?
 	Elf64_Ehdr *ehdr;
+	bool first = true;
 
 	if (!mm) return -EINVAL;
 
@@ -33,15 +34,16 @@ int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
 		if (!ehdr) goto PUT;
 
 		// Test magic bytes to check that it is an ehdr
-		err |= ehdr->e_ident[0] != ELFMAG0;
-		err |= ehdr->e_ident[1] != ELFMAG1;
-		err |= ehdr->e_ident[2] != ELFMAG2;
-		err |= ehdr->e_ident[3] != ELFMAG3;
+		err = 0;
+		err |= (ehdr->e_ident[0] != ELFMAG0);
+		err |= (ehdr->e_ident[1] != ELFMAG1);
+		err |= (ehdr->e_ident[2] != ELFMAG2);
+		err |= (ehdr->e_ident[3] != ELFMAG3);
 		if (err) goto UNMAP;
 
 		// Set addresses
-		pi.addr = vma->vm_start;
-		pi.phdr = ehdr + ehdr->e_phoff;
+		pi.addr = first ? 0 : vma->vm_start;
+		pi.phdr = (void *) ehdr + ehdr->e_phoff;
 		pi.phnum = ehdr->e_phnum;
 
 		// Find path
@@ -57,6 +59,8 @@ int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
 		put_page(page);
 
 		if (res) break;
+
+		first = false;
 	}
 	return res;
 }

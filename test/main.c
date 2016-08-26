@@ -56,9 +56,8 @@ void foo(void)
 
 int main(int argc, char **argv)
 {
-	struct proc_info *proc_info = find_proc_info();
 	handle = malloc(unwind_handle_struct_size());
-	int err = init_unwind_proc_info(handle, proc_info);
+	int err = init_unwind(handle);
 
 	if (err) {
 		perror("Unwinding initialization");

@@ -1750,6 +1750,8 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 	if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
 		eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
 	eh = (void *)(eh_addr + base);
+
+	// Find eh_frame size
 	ptr = eh;
 	do {
 		cie_fde_size = *((u32 *) ptr);

@@ -21,7 +21,7 @@ unsigned int unwind_handle_struct_size(void)
 
 int init_unwind(struct unwind_handle *handle)
 {
-	init_unwind_proc_info(handle, NULL);
+	return init_unwind_proc_info(handle, NULL);
 }
 
 int init_unwind_proc_info(struct unwind_handle *handle,
