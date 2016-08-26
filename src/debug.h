@@ -11,6 +11,7 @@
 #define _DEBUG_H_
 
 #include <linux/bug.h>
+#include <linux/printk.h>
 
 #define KUNWIND_BUG()	BUG()
 

@@ -16,7 +16,7 @@
 #include <linux/types.h>
 #include <linux/module.h>
 
-#include "kunwind-debug.h" // TODO rename the files
+#include "modules.h"
 #include "debug.h"
 #include "unwind/unwind.h"
 
