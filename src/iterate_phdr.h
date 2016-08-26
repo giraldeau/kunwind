@@ -13,7 +13,9 @@ struct phdr_info {
 	unsigned int phnum; /* # of items in phdr */
 };
 
-int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
+int iterate_phdr(int (*cb) (struct phdr_info *info,
+			    struct task_struct *task,
+			    void *data),
 		 struct task_struct *task, void *data);
 
 #endif // _ITERATE_PHDR_H_

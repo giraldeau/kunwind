@@ -4,7 +4,9 @@
 #include <linux/elf.h>
 #include <linux/vmalloc.h>
 
-int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
+int iterate_phdr(int (*cb) (struct phdr_info *info,
+			    struct task_struct *task,
+			    void *data),
 		 struct task_struct *task, void *data)
 {
 	struct vm_area_struct *vma;
@@ -50,7 +52,7 @@ int iterate_phdr(int (*cb) (struct phdr_info *info, void *data),
 		pi.name = vma_file_path(vma, buf, NAME_BUFLEN);
 
 		// Call the callback
-		res = cb(&pi, data);
+		res = cb(&pi, task, data);
 
 		// Free resources
 	UNMAP:

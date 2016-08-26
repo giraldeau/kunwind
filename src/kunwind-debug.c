@@ -227,7 +227,8 @@ static int kunwind_debug_release(struct inode *inode, struct file *file)
 }
 
 #define ElfW(smt) Elf64_##smt
-static int add_module(struct phdr_info *info, void *data)
+static int add_module(struct phdr_info *info, struct task_struct *task,
+		      void *data)
 {
 	struct kunwind_proc_modules *mods = data;
 	struct load_info linfo = { 0 };
@@ -260,7 +261,7 @@ static int add_module(struct phdr_info *info, void *data)
 	mod = kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
 	if (!mod)
 		return -ENOMEM;
-	err = init_kunwind_stp_module(current, &linfo, mod, mods);
+	err = init_kunwind_stp_module(task, &linfo, mod, mods);
 	if (err) {
 		kfree(mod); // Free the module not added to the list
 		return err;
