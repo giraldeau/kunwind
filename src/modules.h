@@ -36,6 +36,7 @@ int init_modules_from_task(struct task_struct *task,
 			   struct kunwind_proc_modules *mods);
 
 int init_modules_from_proc_info(struct proc_info *info,
+				struct task_struct *task,
 				struct kunwind_proc_modules *mods);
 
 int do_current_unwind(struct kunwind_backtrace *bt,

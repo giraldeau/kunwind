@@ -8,9 +8,6 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 
-#include <proc_info.h>
-#include <kunwind.h>
-
 #include "modules.h"
 
 #include "debug.h"
@@ -250,6 +247,7 @@ int init_modules_from_task(struct task_struct *task,
 }
 
 int init_modules_from_proc_info(struct proc_info *pinfo,
+				struct task_struct *task,
 				struct kunwind_proc_modules *mods)
 {
 	int i, err;
@@ -258,7 +256,7 @@ int init_modules_from_proc_info(struct proc_info *pinfo,
 		struct kunwind_stp_module *mod =
 			kmalloc(sizeof(struct kunwind_stp_module),
 				GFP_KERNEL);
-		err = init_kunwind_stp_module(current, linfo, mod, mods);
+		err = init_kunwind_stp_module(task, linfo, mod, mods);
 		if (err) {
 			kfree(mod); // Free the module not added to
 				    // the list

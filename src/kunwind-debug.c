@@ -80,7 +80,7 @@ static long kunwind_proc_info_ioctl(struct file *file,
 		goto KUNWIND_PROC_INFO_IOCTL_ERR;
 	}
 
-	res = init_modules_from_proc_info(pinfo, mods);
+	res = init_modules_from_proc_info(pinfo, current, mods);
 	kfree(pinfo);
 	return res;
 
