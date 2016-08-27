@@ -56,8 +56,7 @@ void foo(void)
 
 int main(int argc, char **argv)
 {
-	handle = malloc(unwind_handle_struct_size());
-	int err = init_unwind(handle);
+	int err = init_unwind(&handle);
 
 	if (err) {
 		perror("Unwinding initialization");

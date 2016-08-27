@@ -6,11 +6,9 @@
 
 struct unwind_handle;
 
-unsigned int unwind_handle_struct_size(void);
+int init_unwind(struct unwind_handle **handlep);
 
-int init_unwind(struct unwind_handle *handle);
-
-int init_unwind_proc_info(struct unwind_handle *handle,
+int init_unwind_proc_info(struct unwind_handle **handlep,
 			  struct proc_info *proc_info);
 
 int unwind(struct unwind_handle *handle,
