@@ -1469,9 +1469,10 @@ static int unwind_frame(struct unwind_context *context,
 	/* Process Frame Description Entry (FDE) instructions. */
 	dbug_unwind (1, "processCFI for FDE\n");
 	if (!processCFI(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
-	    || state->loc > endLoc
-	    || REG_STATE.regs[retAddrReg].where == Nowhere)
+	    || state->loc > endLoc)
 		goto err;
+	if (REG_STATE.regs[retAddrReg].where == Nowhere)
+		goto bottom;
 
 	/* update frame */
 	if (REG_STATE.cfa_is_expr) {
@@ -1635,6 +1636,10 @@ done:
 	/* found for the specific PC. This seems to happen only for kretprobe */
 	/* trampolines and at the end of interrupt backtraces. */
 	return 1;
+bottom:
+	/* It seems that an undefined returned address register means
+	 * that we have reached the end of the stack. */
+	return 2;
 #undef CASES
 #undef FRAME_REG
 }
@@ -1731,6 +1736,8 @@ int unwind_full(struct unwind_context *context,
 		ip_buf++, (*size)++, ip_buf_len--;
 	}
 
+	if (err == 2)
+		return 0;
 	return err;
 }
 EXPORT_SYMBOL_GPL(unwind_full);
