@@ -243,7 +243,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 int init_modules_from_task(struct task_struct *task,
 			   struct kunwind_proc_modules *mods)
 {
-	return iterate_phdr(&add_module, task, mods);
+	return iterate_phdr(add_module, task, mods);
 }
 
 int init_modules_from_proc_info(struct proc_info *pinfo,
