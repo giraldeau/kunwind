@@ -6,8 +6,7 @@
 #include <sys/param.h>
 #include <sys/time.h>
 
-#include "find_proc_info.h"
-#include "libkunwind.h"
+#include <libkunwind.h>
 
 #define DEPTH 10
 

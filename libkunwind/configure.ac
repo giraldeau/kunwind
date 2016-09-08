@@ -25,7 +25,10 @@ AC_TYPE_PID_T
 # Checks for library functions.
 AC_FUNC_MALLOC
 
-AC_CONFIG_FILES([Makefile src/Makefile])
+AC_CONFIG_FILES([Makefile
+    src/Makefile
+    tests/Makefile
+])
 
 LT_INIT
 AC_OUTPUT
