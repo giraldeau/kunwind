@@ -19,9 +19,6 @@ KERNEL_DIR="$(readlink --canonicalize-existing "$1")"
 echo "source \"${PN}/Kconfig\"" >> "${KERNEL_DIR}/Kconfig"
 sed -i "s#+= kernel/#+= kernel/ ${PN}/#" "${KERNEL_DIR}/Makefile"
 
-# Add module for user-mode linux
-echo "source \"${PN}/Kconfig\"" >> "${KERNEL_DIR}/arch/um/Kconfig.rest"
-
 echo >&2
 echo "    $0: done." >&2
 echo "    $0: now you can build the kernel with ${PN} support." >&2
