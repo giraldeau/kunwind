@@ -3,32 +3,6 @@ KUnwind: Fast user-space backtrace for Linux
 
 This module aims at performing call stack unwind of user-space program from the kernel efficiently, both in time and space. It is similar to libunwind, but at the kernel level. One application is to obtain the call site of system calls in any program, transparently to the application. The unwinding is done from the kernel uniquely by examination of the process memory.
 
-## Compile for user-mode linux
-
-For development purpose, it is useful to compile and run the module with user-mode linux.
-
-```
-# add kunwind to the kernel tree
-cd kunwind/
-./built-in.sh <path to linux sources>
-
-# configure the kernel
-cd <path to linux sources>
-make ARCH=um defconfig
-
-# modify the config to set CONFIG_KUNWIND=y
-make ARCH=um menuconfig
-
-# compile
-make ARCH=um
-
-# run
-./linux rootfstype=hostfs rw init=/bin/bash
-
-```
-
-Otherwise, it can be tested with qemu + gdb. The script `debug.sh` helps for this purpose.
-
 ## About backtrace methods
 
 Backtrace can be achieved with other techniques, but have some limitations:
