@@ -40,7 +40,7 @@ void foo2(void)
 	err = gettimeofday(&end, NULL);
 	if (err) exit(1);
 	timersub(&end, &start, &res);
-	printf("Timer for %d iterations is %d seconds and %d microseconds\n", TOP, res.tv_sec, res.tv_usec);
+	printf("Timer for %d iterations is %ld seconds and %ld microseconds\n", TOP, res.tv_sec, res.tv_usec);
 }
 
 void foo1(void)
