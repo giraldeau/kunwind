@@ -79,17 +79,21 @@ def test():
         if not exists("configure"):
             run("./bootstrap")
             run("./configure")
-        run("make check")
+        with settings(warn_only=True):
+            result = run("make check")
+            if result.return_code != 0:
+                run("cat tests/test-suite.log")
 
 @task
 def check():
     execute(build)
+    execute(push)
     execute(reload)
     execute(test)
 
 @task
 def setup():
-    sudo("apt-get install -q -y rsync build-essential autoconf libtool")
+    sudo("apt-get install -q -y rsync build-essential autoconf libtool libtool-bin")
 
 # TODO: fix the kernel compilation
 #     with lcd(linux_dir):
