@@ -73,7 +73,7 @@ def reload():
 
 @task
 def test():
-    rsync_project("", "libkunwind")
+    rsync_project("", "libkunwind", exclude=["Makefile", "Makefile.in"])
     rsync_project("", "include")
     with cd("libkunwind"):
         if not exists("configure"):
