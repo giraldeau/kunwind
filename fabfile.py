@@ -75,13 +75,17 @@ def reload():
 def test():
     patterns = [
         "libkunwind/bootstrap",
-        "libkunwind/configure.ac",
         "libkunwind/*/*.h",
         "libkunwind/*/*.c",
         "libkunwind/*/Makefile.am",
         "libkunwind/Makefile.am",
         "include/*.h",
     ]
+    
+    # the real test here is to copy the file if it is newer
+    if not exists("libkunwind/configure.ac"):
+        put("libkunwind/configure.ac", "libkunwind")
+
     for pattern in patterns:
         matches = glob.glob(pattern)
         for match in matches:
@@ -108,7 +112,7 @@ def check():
 
 @task
 def setup():
-    sudo("apt-get install -q -y rsync build-essential autoconf libtool libtool-bin")
+    sudo("apt-get install -q -y libunwind8-dev rsync build-essential autoconf libtool libtool-bin")
 
 # TODO: fix the kernel compilation
 #     with lcd(linux_dir):
