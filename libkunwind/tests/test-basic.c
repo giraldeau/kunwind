@@ -2,69 +2,65 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <assert.h>
 
 #include <sys/param.h>
 #include <sys/time.h>
 
 #include <libkunwind.h>
 
-#define DEPTH 10
+#define UNW_LOCAL_ONLY
+#include <libunwind.h>
+
+#define DEPTH_MAX 10
+#define noinline __attribute((noinline))
 
 static struct unwind_handle *handle;
-static struct kunwind_backtrace *bt;
 
-void foo3(int print)
+void print_backtrace(char *msg, void **backtrace, int depth)
 {
-	kunwind_backtrace_init(bt, DEPTH);
-
-	if (print) printf("Calling unwinding from userspace\n");
-	int err = unwind(handle, bt);
-	if (err) perror("Error while unwinding");
-	if (print)
-		backtrace_symbols_fd((void* const *)bt->backtrace,
-				     MIN(bt->size, bt->capacity),
-				     STDOUT_FILENO);
-	if (print) printf("End of unwinding from userspace\n");
-
+	printf("%10s depth=%d ", msg, depth);
+	for (int i = 0; i < depth; i++) {
+		printf("%p ", backtrace[i]);
+	}
+	printf("\n");
 }
 
-#define TOP 1000
-#define PRINT_SET 0
-
-void foo2(void)
+noinline void foo3()
 {
-	struct timeval start, end, res;
-	int err = gettimeofday(&start, NULL);
-	if (err) exit(1);
-	for (int i = 0; i < TOP; ++i) foo3(PRINT_SET);
-	err = gettimeofday(&end, NULL);
-	if (err) exit(1);
-	timersub(&end, &start, &res);
-	printf("Timer for %d iterations is %ld seconds and %ld microseconds\n", TOP, res.tv_sec, res.tv_usec);
+	void *addr[DEPTH_MAX];
+	struct kunwind_backtrace *bt;
+
+	bt = malloc(kunwind_backtrace_struct_size(DEPTH_MAX));
+	kunwind_backtrace_init(bt, DEPTH_MAX);
+	assert(unwind(handle, bt) == 0);
+
+	int depth = unw_backtrace((void **)&addr, DEPTH_MAX);
+
+	print_backtrace("kunwind", (void **)&bt->backtrace, bt->size);
+	print_backtrace("libunwind", addr, depth);
+
+	free(bt);
 }
 
-void foo1(void)
+noinline void foo2(void)
+{
+	foo3();
+}
+
+noinline void foo1(void)
 {
 	foo2();
 }
 
-void foo(void)
+noinline void foo(void)
 {
 	foo1();
 }
 
 int main(int argc, char **argv)
 {
-	int err = init_unwind(&handle);
-
-	if (err) {
-		perror("Unwinding initialization");
-		return 1;
-	}
-
-	bt = malloc(kunwind_backtrace_struct_size(DEPTH));
-
+	assert(init_unwind(&handle) == 0);
 	foo();
-
 	return 0;
 }
