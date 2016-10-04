@@ -73,11 +73,26 @@ def reload():
 
 @task
 def test():
-    rsync_project("", "libkunwind", exclude=["Makefile", "Makefile.in"])
-    rsync_project("", "include")
+    patterns = [
+        "libkunwind/bootstrap",
+        "libkunwind/configure.ac",
+        "libkunwind/*/*.h",
+        "libkunwind/*/*.c",
+        "libkunwind/*/Makefile.am",
+        "libkunwind/Makefile.am",
+        "include/*.h",
+    ]
+    for pattern in patterns:
+        matches = glob.glob(pattern)
+        for match in matches:
+            dest = os.path.dirname(match)
+            if not exists(dest):
+                run("mkdir -p \"{}\"".format(dest))
+            put(match, dest, mirror_local_mode=True)
     with cd("libkunwind"):
         if not exists("configure"):
             run("./bootstrap")
+        if not exists("Makefile"):
             run("./configure")
         with settings(warn_only=True):
             result = run("make check")
