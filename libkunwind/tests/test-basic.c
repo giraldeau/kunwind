@@ -26,17 +26,27 @@ static struct unwind_handle *handle;
 void save_maps(void)
 {
 	static const int size = 1024;
-	int ret;
+	int towrite;
 	char *name;
 	char *data = malloc(size);
 
-	asprintf(&name, "/proc/%d/maps", getpid());
+	if (asprintf(&name, "/proc/%d/maps", getpid()) < 0)
+		return;
+
 	int maps_fd = open(name, O_RDONLY);
 	int dest_fd = open("maps.snapshot",
-			O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
-	while ((ret = read(maps_fd, data, size)) > 0) {
-		if (write(dest_fd, data, ret) < 0)
-			break;
+			O_WRONLY | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+	if (maps_fd < 0 || dest_fd < 0)
+		return;
+	while ((towrite = read(maps_fd, data, size)) > 0) {
+		char *buf = data;
+		do {
+			int written = write(dest_fd, buf, towrite);
+			if (written < 0)
+				break;
+			towrite -= written;
+			buf += written;
+		} while (towrite > 0);
 	}
 	close(maps_fd);
 	close(dest_fd);
