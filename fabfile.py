@@ -77,6 +77,7 @@ def test():
         "libkunwind/bootstrap",
         "libkunwind/*/*.h",
         "libkunwind/*/*.c",
+        "libkunwind/*/*.cpp",
         "libkunwind/*/Makefile.am",
         "libkunwind/Makefile.am",
         "include/*.h",

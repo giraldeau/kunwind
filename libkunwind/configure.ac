@@ -10,6 +10,7 @@ AM_INIT_AUTOMAKE([foreign -Wall -Werror -Wno-extra-portability])
 
 # Checks for programs.
 AC_PROG_CC
+AC_PROG_CXX
 AC_PROG_MAKE_SET
 
 # Checks for libraries.
