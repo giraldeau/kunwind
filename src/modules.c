@@ -148,6 +148,7 @@ FREEPAGES:
 FREEPATH:
 	kfree(path);
 	mod->stp_mod.buf = mod->stp_mod.path = NULL;
+	dbug_unwind(1, "Failed to load module at virtual address %lx\n", vma->vm_start);
 	return res;
 }
 
@@ -232,7 +233,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 	err = init_kunwind_stp_module(task, &linfo, mod, mods);
 	if (err) {
 		kfree(mod); // Free the module not added to the list
-		return err;
+		return 0;
 	}
 
 	list_add_tail(&(mod->list), &(mods->stp_modules));
