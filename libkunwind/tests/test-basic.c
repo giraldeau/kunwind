@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <sys/param.h>
+#include <sys/personality.h>
 #include <sys/time.h>
 
 #include <libkunwind.h>
@@ -96,6 +97,16 @@ noinline void foo(void)
 
 int main(int argc, char **argv)
 {
+	/*
+	 * Re-execute without address randomization to get
+	 * deterministic results.
+	 */
+	if (!getenv("NO_RANDOMIZE")) {
+		setenv("NO_RANDOMIZE", "1", 1);
+		personality(ADDR_NO_RANDOMIZE);
+		execle(argv[0], argv[0], NULL, environ);
+	}
+
 	save_maps();
 	assert(init_unwind(&handle) == 0);
 	foo();
