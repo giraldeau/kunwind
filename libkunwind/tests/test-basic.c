@@ -1,8 +1,10 @@
+#define _GNU_SOURCE
+#include <assert.h>
 #include <execinfo.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <assert.h>
 
 #include <sys/param.h>
 #include <sys/time.h>
@@ -16,6 +18,30 @@
 #define noinline __attribute((noinline))
 
 static struct unwind_handle *handle;
+
+/*
+ * Save in the current directory the virtual memory map of the process
+ * for debugging purposes.
+ */
+void save_maps(void)
+{
+	static const int size = 1024;
+	int ret;
+	char *name;
+	char *data = malloc(size);
+
+	asprintf(&name, "/proc/%d/maps", getpid());
+	int maps_fd = open(name, O_RDONLY);
+	int dest_fd = open("maps.snapshot",
+			O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR);
+	while ((ret = read(maps_fd, data, size)) > 0) {
+		if (write(dest_fd, data, ret) < 0)
+			break;
+	}
+	close(maps_fd);
+	close(dest_fd);
+	free(data);
+}
 
 void print_backtrace(char *msg, void **backtrace, int depth)
 {
@@ -60,6 +86,7 @@ noinline void foo(void)
 
 int main(int argc, char **argv)
 {
+	save_maps();
 	assert(init_unwind(&handle) == 0);
 	foo();
 	return 0;
