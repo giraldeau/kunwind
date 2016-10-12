@@ -104,7 +104,7 @@ noinline void foo3()
 
 	assert(syms_kunwind.size() == syms_libunwind.size());
 	for (int i = 0; i < syms_kunwind.size(); i++) {
-		cout << syms_kunwind[i].compare(syms_libunwind[i]);
+		assert(syms_kunwind[i].compare(syms_libunwind[i]) == 0);
 	}
 
 	free(bt);
