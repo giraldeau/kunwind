@@ -21,10 +21,7 @@ noinline void foo(int rec, function<void ()> fn)
 {
 	volatile int x = 0;
 	if (rec > 0) {
-		auto rec_lambda = [&](){
-			foo(rec - 1, fn);
-		};
-		rec_lambda();
+		foo(rec - 1, fn);
 	} else {
 		fn();
 	}
@@ -33,20 +30,33 @@ noinline void foo(int rec, function<void ()> fn)
 int main(int argc, char **argv)
 {
 	int repeat = 1000;
+	int depth_min = 1;
+	int depth_max = DEPTH_MAX;
 	int verbose = 0;
 
-	assert(init_unwind(&handle) == 0);
-	bt = (struct kunwind_backtrace *) malloc(kunwind_backtrace_struct_size(DEPTH_MAX));
-	kunwind_backtrace_init(bt, DEPTH_MAX);
+	/* positional arguments overloads the defaults */
 
-	for (int i = 1; i <= DEPTH_MAX; i *= 2) {
+	if (argc > 1)
+		repeat = atoi(argv[1]);
+	if (argc > 2)
+		depth_min = atoi(argv[2]);
+	if (argc > 3)
+		depth_max = min(atoi(argv[3]), DEPTH_MAX);
+
+	printf("repeat=%d depth_min=%d depth_max=%d\n", repeat, depth_min, depth_max);
+
+	assert(init_unwind(&handle) == 0);
+	bt = (struct kunwind_backtrace *) malloc(kunwind_backtrace_struct_size(depth_max));
+	kunwind_backtrace_init(bt, depth_max);
+
+	for (int i = depth_min; i <= depth_max; i *= 2) {
 
 		/*
 		 * Check that the depth matches
 		 */
 		foo(i, [&](){
-			void *buf[DEPTH_MAX + 1];
-			int depth = backtrace(buf, DEPTH_MAX);
+			void *buf[depth_max + 1];
+			int depth = backtrace(buf, depth_max);
 			unwind(handle, bt);
 			int diff = depth >= bt->size ? depth - bt->size : bt->size - depth;
 			if (verbose)
