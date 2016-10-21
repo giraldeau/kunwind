@@ -26,7 +26,7 @@
 #include <vector>
 #include <string>
 
-static struct unwind_handle *handle;
+static struct kunwind_handle *handle;
 
 using namespace std;
 
@@ -87,16 +87,16 @@ noinline void foo3()
 	void *addr[DEPTH_MAX];
 	struct kunwind_backtrace *bt;
 
-	bt = (struct kunwind_backtrace *) malloc(kunwind_backtrace_struct_size(DEPTH_MAX));
-	kunwind_backtrace_init(bt, DEPTH_MAX);
-	assert(unwind(handle, bt) == 0);
+	bt = kunwind_backtrace_new(DEPTH_MAX);
+	assert(bt != NULL);
+	assert(kunwind_backtrace(handle, bt) == 0);
 
 	int depth = unw_backtrace((void **)&addr, DEPTH_MAX);
 
 	vector<string> syms_kunwind;
 	vector<string> syms_libunwind;
 
-	get_symbols(syms_kunwind, (void **)&bt->backtrace, 1, bt->size);
+	get_symbols(syms_kunwind, (void **)bt->entries, 1, bt->nr_entries);
 	get_symbols(syms_libunwind, (void **)&addr, 0, depth - 1);
 
 	print_backtrace("kunwind  ", syms_kunwind);
@@ -107,7 +107,7 @@ noinline void foo3()
 		assert(syms_kunwind[i].compare(syms_libunwind[i]) == 0);
 	}
 
-	free(bt);
+	kunwind_backtrace_free(bt);
 }
 
 noinline void foo2(void)
@@ -141,7 +141,8 @@ int main(int argc, char **argv)
 	}
 
 	save_maps();
-	assert(init_unwind(&handle) == 0);
+	assert(kunwind_open(&handle) == 0);
 	foo();
+	kunwind_close(handle);
 	return 0;
 }

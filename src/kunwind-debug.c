@@ -14,24 +14,28 @@
 #include "debug.h"
 #include "modules.h"
 
+static const u32 entries_limit = 128;
 #define PROC_FILENAME "kunwind_debug"
 
 static int kunwind_debug_open(struct inode *inode, struct file *file)
 {
-	int err, compat = 0;
-	struct kunwind_proc_modules *mods =
-			kmalloc(sizeof(struct kunwind_proc_modules), GFP_KERNEL);
+	int ret;
+	int compat;
+	struct kunwind_proc_modules *mods;
+
+
+	mods = kmalloc(sizeof(*mods), GFP_KERNEL);
 	if (!mods)
-		return -EFAULT;
+		return -ENOMEM;
 
 	compat = _stp_is_compat_task();
-	err = init_proc_unwind_info(mods, compat);
-	if (err) {
+	ret = init_proc_unwind_info(mods, compat);
+	if (ret) {
 		kfree(mods);
-	} else {
-		file->private_data = mods;
+		return ret;
 	}
-	return err;
+	file->private_data = mods;
+	return ret;
 }
 
 static int kunwind_debug_release(struct inode *inode, struct file *file)
@@ -89,43 +93,51 @@ KUNWIND_PROC_INFO_IOCTL_ERR:
 	return err;
 }
 
-static long kunwind_unwind_ioctl(struct file *file,
+static long kunwind_backtrace_ioctl(struct file *file,
 		struct kunwind_backtrace __user *uback)
 {
 	struct kunwind_proc_modules *mods = file->private_data;
-	struct kunwind_backtrace *back;
-	int err;
-	u32 capacity, struct_size;
+	struct kunwind_backtrace bt;
+	int ret;
 
-	dbug_unwind(1, "Starting kunwind unwinding\n");
+	dbug_unwind(1, "kunwind_backtrace_ioctl entry\n");
 
-	if (get_user(capacity, (typeof(capacity)*) uback))
+	memset(&bt, 0, sizeof(bt));
+	if (get_user(bt.max_entries, &uback->max_entries))
 		return -EFAULT;
 
-	struct_size = sizeof(struct kunwind_backtrace) +
-		capacity * sizeof(__u64);
-	back = kmalloc(struct_size, GFP_KERNEL);
-	if (!back)
+	dbug_unwind(1, "max_entries=%d\n", bt.max_entries);
+	if (bt.max_entries == 0)
+		return -EINVAL;
+
+	/* Clamp memory usage */
+	bt.max_entries = min(bt.max_entries, entries_limit);
+	bt.entries = kmalloc(bt.max_entries * sizeof(*bt.entries), GFP_KERNEL);
+	if (!bt.entries)
 		return -ENOMEM;
 
-	back->capacity = capacity;
-	err = do_current_unwind(back, mods);
-	if (err)
-		printk("Error happened while unwinding\n");
-
-	if (copy_to_user(uback, back, struct_size)) {
-		err = -EFAULT;
-		goto KUNWIND_UNWIND_IOCTL_ERR;
+	ret = do_current_unwind(&bt, mods);
+	if (ret) {
+		dbug_unwind(1, "kunwind_backtrace unwind failed %d\n", ret);
+		ret = -EFAULT;
+		goto out;
 	}
 
-	dbug_unwind(1, "Ending kunwind unwinding\n");
+	if (put_user(bt.nr_entries, &uback->nr_entries)) {
+		ret = -EFAULT;
+		goto out;
+	}
 
-	kfree(back);
-	return 0;
+	if (copy_to_user(uback->entries, bt.entries,
+			bt.nr_entries * sizeof(*bt.entries))) {
+		ret = -EFAULT;
+		goto out;
+	}
 
-KUNWIND_UNWIND_IOCTL_ERR:
-	kfree(back);
-	return err;
+out:
+	kfree(bt.entries);
+	dbug_unwind(1, "kunwind_backtrace_ioctl end %d\n", ret);
+	return ret;
 }
 
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
@@ -134,10 +146,12 @@ long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case KUNWIND_PROC_INFO_IOCTL:
+		dbug_unwind(1, "kunwind init process\n");
 		return kunwind_proc_info_ioctl(file,
 		                (struct proc_info __user *) arg);
 	case KUNWIND_UNWIND_IOCTL:
-		return kunwind_unwind_ioctl(file,
+		dbug_unwind(1, "kunwind backtrace\n");
+		return kunwind_backtrace_ioctl(file,
 		                (struct kunwind_backtrace __user *) arg);
 	default:
 		return -ENOIOCTLCMD;

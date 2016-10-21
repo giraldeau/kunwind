@@ -1723,11 +1723,14 @@ int unwind_full(struct unwind_context *context,
 		__u32 *size)
 {
 	int err;
-	*size = 0;
-	if (!ip_buf_len)
+
+	if (!ip_buf_len || !ip_buf || !size)
 		return -EINVAL;
+	*size = 0;
 	*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;
-	ip_buf++, (*size)++, ip_buf_len--;
+	ip_buf++;
+	(*size)++;
+	ip_buf_len--;
 	while (ip_buf_len) {
 		err = unwind(context, 1, proc);
 		*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;

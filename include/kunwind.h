@@ -5,25 +5,10 @@
 #include <linux/types.h>
 
 struct kunwind_backtrace {
-	__u32 capacity;
-	__u32 size;
-	__u64 backtrace[0];
+	__u32 max_entries;
+	__u32 nr_entries;
+	__u64 *entries;
 };
-
-static inline
-unsigned int kunwind_backtrace_struct_size(unsigned int depth)
-{
-	struct kunwind_backtrace *p;
-	return sizeof(*p) + depth * sizeof(p->backtrace[0]);
-}
-
-static inline
-void kunwind_backtrace_init(struct kunwind_backtrace* backtrace,
-			    unsigned int depth)
-{
-	backtrace->capacity = depth;
-	backtrace->size = 0;
-}
 
 #define KUNWIND_UNWIND_IOCTL _IO(0xF6, 0x92)
 

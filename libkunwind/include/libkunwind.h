@@ -4,21 +4,26 @@
 #include "kunwind.h"
 #include "proc_info.h"
 
-struct unwind_handle;
+#include <stdio.h>
+
+struct kunwind_handle;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-int init_unwind(struct unwind_handle **handlep);
+struct kunwind_backtrace *kunwind_backtrace_new(int max_entries);
+void kunwind_backtrace_free(struct kunwind_backtrace *backtrace);
 
-int init_unwind_proc_info(struct unwind_handle **handlep,
-			  struct proc_info *proc_info);
+int kunwind_open(struct kunwind_handle **handle);
 
-int unwind(struct unwind_handle *handle,
-	   struct kunwind_backtrace* backtrace);
+int kunwind_init_proc_info(struct kunwind_handle **handle,
+		struct proc_info *proc_info);
 
-void release_handle(struct unwind_handle *handle);
+int kunwind_backtrace(struct kunwind_handle *handle,
+	   struct kunwind_backtrace *backtrace);
+
+void kunwind_close(struct kunwind_handle *handle);
 
 #ifdef __cplusplus
 }

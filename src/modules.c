@@ -175,7 +175,7 @@ int init_proc_unwind_info(struct kunwind_proc_modules *mods,
 {
 	if (!mods)
 		return -EINVAL;
-	memset(mods, 0, sizeof(struct kunwind_proc_modules));
+	memset(mods, 0, sizeof(*mods));
 	INIT_LIST_HEAD(&(mods->stp_modules));
 	mods->compat = compat;
 
@@ -277,6 +277,6 @@ int do_current_unwind(struct kunwind_backtrace *bt,
 	memset(&context, 0, sizeof(context));
 	regs = *current_pt_regs();
 	arch_unw_init_frame_info(&context.info, &regs, 0);
-	return unwind_full(&context, mods, bt->backtrace,
-			   bt->capacity, &(bt->size));
+	return unwind_full(&context, mods, bt->entries,
+			   bt->max_entries, &(bt->nr_entries));
 }

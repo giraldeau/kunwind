@@ -11,41 +11,79 @@
 
 #include <sys/ioctl.h>
 
-struct unwind_handle {
+struct kunwind_handle {
 	FILE *fd;
 };
 
-int init_unwind(struct unwind_handle **handlep)
+struct kunwind_backtrace *kunwind_backtrace_new(int max_entries)
 {
-	return init_unwind_proc_info(handlep, NULL);
+	struct kunwind_backtrace *bt;
+
+	if (max_entries == 0)
+		return NULL;
+
+	bt = calloc(sizeof(*bt), 1);
+	if (bt == NULL) {
+		return NULL;
+	}
+	bt->entries = calloc(sizeof(*bt->entries), max_entries);
+	if (bt->entries == NULL) {
+		free(bt);
+		return NULL;
+	}
+	bt->max_entries = max_entries;
+	return bt;
 }
 
-int init_unwind_proc_info(struct unwind_handle **handlep,
+void kunwind_backtrace_free(struct kunwind_backtrace *bt)
+{
+	if (bt) {
+		free(bt->entries);
+	}
+	free(bt);
+}
+
+int kunwind_open(struct kunwind_handle **handle)
+{
+	return kunwind_init_proc_info(handle, NULL);
+}
+
+int kunwind_init_proc_info(struct kunwind_handle **handle,
 			  struct proc_info *proc_info)
 {
-	int err;
+	int ret = 0;
 
-	struct unwind_handle *handle = malloc(sizeof(*handle));
-	handle->fd = fopen("/proc/kunwind_debug", "r+");
-	if (!handle->fd)
-		return -EIO;
+	FILE *fd = fopen("/proc/kunwind_debug", "r+");
+	if (fd == NULL) {
+		printf("errno=%d\n", errno);
+		return errno;
+	}
 
-	*handlep = handle;
-	err = ioctl(fileno(handle->fd), KUNWIND_PROC_INFO_IOCTL,
-		    proc_info);
+	ret = ioctl(fileno(fd), KUNWIND_PROC_INFO_IOCTL, proc_info);
+	if (ret < 0) {
+		return ret;
+	}
 
-	return err;
+	*handle = calloc(1, sizeof(struct kunwind_handle));
+	if (*handle == NULL) {
+		fclose(fd);
+		return -ENOMEM;
+	}
+	(*handle)->fd = fd;
+	return ret;
 }
 
-int unwind(struct unwind_handle *handle,
+int kunwind_backtrace(struct kunwind_handle *handle,
 	   struct kunwind_backtrace* backtrace)
 {
 	return ioctl(fileno(handle->fd), KUNWIND_UNWIND_IOCTL,
 		     backtrace);
 }
 
-void release_handle(struct unwind_handle *handle)
+void kunwind_close(struct kunwind_handle *handle)
 {
-	fclose(handle->fd);
-	free(handle);
+	if (handle != NULL) {
+		fclose(handle->fd);
+		free(handle);
+	}
 }

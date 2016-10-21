@@ -12,8 +12,8 @@
 #define DEPTH_MAX 128
 #define noinline __attribute((noinline))
 
-static struct unwind_handle *handle;
-struct kunwind_backtrace *bt;
+static struct kunwind_handle *handle;
+static struct kunwind_backtrace *bt;
 
 using namespace std;
 
@@ -45,9 +45,9 @@ int main(int argc, char **argv)
 
 	printf("repeat=%d depth_min=%d depth_max=%d\n", repeat, depth_min, depth_max);
 
-	assert(init_unwind(&handle) == 0);
-	bt = (struct kunwind_backtrace *) malloc(kunwind_backtrace_struct_size(depth_max));
-	kunwind_backtrace_init(bt, depth_max);
+	assert(kunwind_open(&handle) == 0);
+	bt = kunwind_backtrace_new(depth_max);
+	assert(bt);
 
 	for (int i = depth_min; i <= depth_max; i *= 2) {
 
@@ -57,18 +57,21 @@ int main(int argc, char **argv)
 		foo(i, [&](){
 			void *buf[depth_max + 1];
 			int depth = backtrace(buf, depth_max);
-			unwind(handle, bt);
-			int diff = depth >= bt->size ? depth - bt->size : bt->size - depth;
+			kunwind_backtrace(handle, bt);
+
+			int diff = depth - bt->nr_entries;
+			if (diff < 0)
+				diff *= -1;
 			if (verbose)
-				printf("%-5d %-5d %-5d %-5d\n", i, depth, bt->size, diff);
+				printf("%-5d %-5d %-5d %-5d\n", i, depth, bt->nr_entries, diff);
 			assert(diff <= 1);
 		});
 
 		auto t1 = chrono::system_clock::now();
 		for (int j = 0; j < repeat; j++) {
 			foo(i, [&]() {
-				assert(unwind(handle, bt) == 0);
-				assert(bt->size >= i);
+				assert(kunwind_backtrace(handle, bt) == 0);
+				assert(bt->nr_entries >= i);
 			});
 		}
 		auto t2 = chrono::system_clock::now();
@@ -78,6 +81,7 @@ int main(int argc, char **argv)
 		printf("%-5d %6.3f us (%6.3f us)\n", i, avg * 1E6, unit * 1E6);
 	}
 
-	free(bt);
+	kunwind_backtrace_free(bt);
+	kunwind_close(handle);
 	return 0;
 }
