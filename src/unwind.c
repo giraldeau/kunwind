@@ -1707,41 +1707,47 @@ int unwind(struct unwind_context *context, int user,
 			    m->eh_frame_len, 1, user, compat_task,
 			    kunw_mod);
 
-        /* This situation occurs where some unwind data was found, but
-           it was lacking somehow.  */
-        if (res != 0) {
-                dbug_unwind (2, "unwinding failed: %d\n", res);
-        }
-
+	dbug_unwind (2, "unwind_frame returned: %d\n", res);
 	return res;
+}
+
+
+unsigned long get_pc(struct unwind_frame_info *info)
+{
+	return UNW_PC(info) - info->call_frame;
 }
 
 int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
-		__u64 *ip_buf,
-		__u32 ip_buf_len,
-		__u32 *size)
+		struct kunwind_backtrace *bt)
 {
-	int err;
+	int ret;
+	unsigned long pc;
 
-	if (!ip_buf_len || !ip_buf || !size)
+	if (!bt->entries || !bt->max_entries)
 		return -EINVAL;
-	*size = 0;
-	*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;
-	ip_buf++;
-	(*size)++;
-	ip_buf_len--;
-	while (ip_buf_len) {
-		err = unwind(context, 1, proc);
-		*ip_buf = UNW_PC(&(context->info)) - context->info.call_frame;
-		dbug_unwind(1, "size %d, ip %p, ip_buf_len %d\n", *size, (void *)*ip_buf, ip_buf_len);
-		if (err || !*ip_buf || !UNW_PC(&(context->info))) break;
-		ip_buf++, (*size)++, ip_buf_len--;
+
+	bt->nr_entries = 0;
+
+	while (bt->nr_entries < bt->max_entries) {
+		pc = get_pc(&context->info);
+
+		if (pc == 0)
+			break;
+
+		bt->entries[bt->nr_entries++] = pc;
+		dbug_unwind(1, "nr_entries %u, ip %p\n", bt->nr_entries, (void *) pc);
+
+		ret = unwind(context, 1, proc);
+
+		if (ret != 0)
+			break;
 	}
 
-	if (err == 2)
-		return 0;
-	return err;
+	/* The return code 2 indicates that the unwind is completed */
+	if (ret == 2)
+		ret = 0;
+	return ret;
 }
 EXPORT_SYMBOL_GPL(unwind_full);
 

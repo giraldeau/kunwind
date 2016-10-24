@@ -448,9 +448,7 @@ struct kunwind_proc_modules;
 
 int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
-		__u64 *ip_buf,
-		unsigned int ip_buf_len,
-		unsigned int *size);
+		struct kunwind_backtrace *bt);
 
 int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end, int compat,
 		      u8 *hdr, unsigned long hdr_addr, unsigned long hdr_len,

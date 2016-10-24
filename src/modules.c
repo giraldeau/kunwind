@@ -275,8 +275,8 @@ int do_current_unwind(struct kunwind_backtrace *bt,
 	struct pt_regs regs;
 
 	memset(&context, 0, sizeof(context));
+	/* FIXME: copy pt_regs only once */
 	regs = *current_pt_regs();
 	arch_unw_init_frame_info(&context.info, &regs, 0);
-	return unwind_full(&context, mods, bt->entries,
-			   bt->max_entries, &(bt->nr_entries));
+	return unwind_full(&context, mods, bt);
 }
