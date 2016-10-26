@@ -1757,7 +1757,7 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 {
 	unsigned long eh_addr, eh_len, cie_fde_size = 0;
 	const u8* pos;
-	u8 *eh, *ptr;
+	u8 *eh, *ptr, *prev_ptr;
 
 	// FIXME -1 tablesize might not be right in following call
 	pos = hdr + 4;
@@ -1768,7 +1768,7 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 	eh = (void *)(eh_addr + base);
 
 	// Find eh_frame size
-	ptr = eh;
+	ptr = prev_ptr = eh;
 	do {
 		cie_fde_size = *((u32 *) ptr);
 		ptr += 4;
@@ -1780,6 +1780,9 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 		eh_len = (unsigned long) ptr - (unsigned long) eh;
 		if (eh_len + vma_start + hdr_addr > vma_end)
 			return -EINVAL;
+		if (prev_ptr >= ptr)
+			return -EINVAL;
+		prev_ptr = ptr;
 	} while (cie_fde_size);
 
 	*eh_frame = eh;
