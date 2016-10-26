@@ -46,7 +46,7 @@ static int extract_unwind_info(struct dl_phdr_info *info,
 	struct load_info_list *elem = malloc(sizeof(struct load_info_list));
 	ElfW(Addr) addr;
 	elem->info.obj_addr = addr = info->dlpi_addr;
-	elem->info.eh_frame_hdr_addr = addr + eh_phdr->p_vaddr;
+	elem->info.eh_frame_hdr_ubuf = addr + eh_phdr->p_vaddr;
 	elem->info.eh_frame_hdr_size = eh_phdr->p_memsz;
 	elem->info.dynamic = dynamic;
 	elem->next = NULL;

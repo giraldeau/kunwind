@@ -49,22 +49,17 @@ static inline int _stp_is_compat_task(void)
 
 #endif /* CONFIG_COMPAT */
 
+struct section {
+	unsigned long offset;	/* offset from vma start */
+	u8 __user *ubuf;	/* original virtual address of the section */
+	u8 *kbuf;		/* accessible buffer mapped in kernel */
+	uint32_t size;		/* buffer size in bytes */
+};
+
 struct _stp_module {
-	const char* name; /* module name (kernel) or /canonical/path for userspace*/
-	char* path; /* canonical filesystem path (kernel .ko or user) */
-	char* buf; /* buffer for the path (it can start after the
-		    * beginning */
-
 	int is_dynamic;
-	unsigned long static_addr;
-
-	// The .eh_frame unwind data for this module.
-	void *eh_frame;
-	void *unwind_hdr;
-	uint32_t eh_frame_len;
-	uint32_t unwind_hdr_len;
-	unsigned long eh_frame_addr; /* Orig load address (offset) .eh_frame */
-	unsigned long unwind_hdr_addr; /* same for .eh_frame_hdr */
+	struct section ehf_hdr;	/* eh_frame_hdr */
+	struct section ehf;	/* eh_frame */
 };
 
 /** Safely read from userspace or kernelspace.
@@ -415,7 +410,7 @@ struct unwind_reg_state {
 };
 
 struct unwind_state {
-	uleb128_t loc;
+	uleb128_t loc;						/* instruction address */
 	uleb128_t codeAlign;
 	sleb128_t dataAlign;
 	unsigned stackDepth:8;
@@ -450,7 +445,7 @@ int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
 		struct kunwind_backtrace *bt);
 
-int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end, int compat,
-		      u8 *hdr, unsigned long hdr_addr, unsigned long hdr_len,
-		      u8 **eh_frame, unsigned long *eh_frame_addr, unsigned long *eh_frame_len);
+int eh_frame_from_hdr(void *base, unsigned long vma_start,
+		unsigned long vma_end, int compat, struct section *ehf_hdr,
+		struct section *ehf);
 #endif /*_STP_UNWIND_H_*/

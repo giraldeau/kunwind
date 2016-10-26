@@ -14,16 +14,11 @@ struct kunwind_proc_modules {
 struct kunwind_stp_module {
 	struct _stp_module stp_mod;
 	struct list_head list;
-	void *base;
-	struct vm_area_struct *vma;
-	unsigned long vma_start;
-	unsigned long vma_end;
-	struct page **pages;
+	struct vm_area_struct *elf_vma;	/* ELF userspace vma */
+	void *elf_vmap;			/* ELF vmap in kernel */
+	struct page **pages;		/* ELF pages for kernel vmap */
 	int npages;
 };
-
-int fill_eh_frame_info(struct kunwind_stp_module *mod,
-		       struct kunwind_proc_modules *proc);
 
 int fill_mod_path(struct kunwind_stp_module *mod);
 

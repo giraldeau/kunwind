@@ -12,7 +12,7 @@
  */
 struct load_info {
 	__u64 obj_addr;
-	__u64 eh_frame_hdr_addr;
+	__u64 eh_frame_hdr_ubuf;
 	__u64 eh_frame_hdr_size;
 	__u64 eh_frame_addr;
 	__u64 eh_frame_size;

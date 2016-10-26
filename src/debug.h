@@ -13,13 +13,6 @@
 #include <linux/bug.h>
 #include <linux/printk.h>
 
-#define KUNWIND_BUG()	BUG()
-
-#define KUNWIND_BUGM(message, args...) ({		\
-		printk(message, ##args);		\
-		KUNWIND_BUG();				\
-	})
-
 #define EUNIMPL	1
 
 #define _stp_warn(fmt, args...) printk(fmt "\n", ##args);

@@ -172,19 +172,10 @@ static unsigned long read_pointer(const u8 **pLoc, const void *end, signed ptrTy
 	return read_ptr_sect(pLoc, end, ptrType, 0, 0, user, compat_task, 0);
 }
 
-static int
-stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
-			    unsigned long *vm_start, unsigned long *vm_end,
-			    const char **path, struct kunwind_stp_module *kunw_mod)
+static inline unsigned long
+get_pc(struct unwind_frame_info *info)
 {
-	if (!kunw_mod)
-		return -ESRCH;
-	if (vm_start)
-		*vm_start = kunw_mod->vma_start;
-	if (vm_end)
-		*vm_end = kunw_mod->vma_end;
-	// TODO fill or remove remove other fields?
-	return 0;
+	return UNW_PC(info) - info->call_frame;
 }
 
 static struct kunwind_stp_module
@@ -192,7 +183,7 @@ static struct kunwind_stp_module
 {
 	struct kunwind_stp_module *kunw_mod = NULL, *pos;
 	list_for_each_entry(pos, &(proc->stp_modules), list) {
-		if (pc >= pos->vma_start && pc <= pos->vma_end) {
+		if (pc >= pos->elf_vma->vm_start && pc <= pos->elf_vma->vm_end) {
 			kunw_mod = pos;
 			break;
 		}
@@ -480,7 +471,7 @@ static void set_expr_rule(uleb128_t reg, enum item_location where,
    512 should be enough for anybody... */
 #define MAX_CFI 512
 
-static int processCFI(const u8 *start, const u8 *end, unsigned long targetLoc,
+static int run_cfi_program(const u8 *start, const u8 *end, unsigned long targetLoc,
 		      signed ptrType, int user, struct unwind_state *state, int compat_task)
 {
 	union {
@@ -891,59 +882,58 @@ static char *_stp_eh_enc_name(signed type)
 // and the elfutils base relocation done during loading of the .dwarf_frame
 // in translate.cxx.
 static unsigned long
-adjustStartLoc (unsigned long startLoc,
-		struct _stp_module *m,
-		unsigned ptrType, int is_ehframe, int user,
-		struct kunwind_stp_module *kunw_mod)
+adjust_start_loc(unsigned long start_loc,
+		 struct _stp_module *m, unsigned ptr_type, int is_ehframe,
+		 int user, struct kunwind_stp_module *kunw_mod)
 {
-  unsigned long vm_addr = 0;
+	unsigned long new_start_loc = start_loc;
+	unsigned long temp = start_loc;
 
-  /* XXX - some, or all, of this should really be done by
-     _stp_module_relocate and/or read_pointer. */
-  dbug_unwind(2, "adjustStartLoc=%lx, ptrType=%s, m=%s, dynamic=%d eh=%d\n",
-	      startLoc, _stp_eh_enc_name(ptrType), m->path ?: "", m->is_dynamic, is_ehframe);
-  if (startLoc == 0
-      //|| strcmp (m->name, "kernel")  == 0 // FIXME will we support unwinding of kernel code
-      || (!m->is_dynamic && !is_ehframe))
-    return startLoc;
+	/* XXX - some, or all, of this should really be done by
+	 _stp_module_relocate and/or read_pointer. */
+	dbug_unwind(2, "adjust_start_loc parameters: start_loc=%lx ptr_type=%s file=%pD1 dynamic=%d is_ehframe=%d\n",
+			start_loc, _stp_eh_enc_name(ptr_type),
+			kunw_mod->elf_vma->vm_file, m->is_dynamic, is_ehframe);
 
-  /* eh_frame data has been loaded in the kernel, so readjust offset. */
-  if (is_ehframe) {
-    dbug_unwind(2, "eh_frame=%lx, eh_frame_addr=%lx\n", (unsigned long) m->eh_frame, m->eh_frame_addr);
-    if ((ptrType & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel) {
-      startLoc -= (unsigned long) m->eh_frame;
-      startLoc += m->eh_frame_addr;
-    }
-    /* User space exec */
-    if (!m->is_dynamic)
-      return startLoc;
-  }
+	if (start_loc == 0 || !is_ehframe) {
+		new_start_loc = 0;
+		goto out;
+	}
 
-  /* User space or kernel dynamic module. */
-  if (user && m->is_dynamic)
-	  stap_find_vma_map_info_user(current->group_leader, m, &vm_addr, NULL, NULL, kunw_mod);
-  else
-    vm_addr = m->static_addr;
+	/*
+	 * eh_frame data has been loaded in the kernel.
+	 * Adjust the offset in the case start_loc is pcrel
+	 */
+	dbug_unwind(2, "eh_frame=%lx, eh_frame_offset=%lx\n",
+			(unsigned long) m->ehf.kbuf, m->ehf.offset);
+	if ((ptr_type & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel) {
+		temp = new_start_loc - (unsigned long) m->ehf.kbuf + m->ehf.offset;
+		dbug_unwind(2, "DW_EH_PE_pcrel  %lx -> %lx\n", new_start_loc, temp);
+		new_start_loc = temp;
+	}
 
-  if (is_ehframe)
-    return startLoc + vm_addr;
-  else
-    return -EINVAL; // startLoc + vm_addr - s->sec_load_offset;
-
+	if (m->is_dynamic) {
+		temp = new_start_loc + kunw_mod->elf_vma->vm_start;
+		dbug_unwind(2, "is_dynamic  %lx -> %lx\n", new_start_loc, temp);
+		new_start_loc = temp;
+	}
+out:
+	dbug_unwind(1, "adjust_start_loc: %lx -> %lx\n", start_loc, new_start_loc);
+	return new_start_loc;
 }
 
 /* If we previously created an unwind header, then use it now to binary search */
 /* for the FDE corresponding to pc. */
-static u32 *_stp_search_unwind_hdr(unsigned long pc,
-				   struct _stp_module *m,
-				   int is_ehframe, int user, int compat_task, struct kunwind_stp_module *kunw_mod)
+static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
+			    int is_ehframe, int user, int compat_task,
+			    struct kunwind_stp_module *kunw_mod)
 {
-	const u8 *ptr, *end, *hdr = m->unwind_hdr;
-	uint32_t hdr_len = m->unwind_hdr_len;
-	unsigned long startLoc;
+	const u8 *ptr, *end, *hdr = m->ehf_hdr.kbuf;
+	uint32_t hdr_len = m->ehf_hdr.size;
+	unsigned long start_loc, start_loc_adj;
 	u32 *fde = NULL;
-	unsigned num, tableSize;
-	unsigned long eh_hdr_addr = m->unwind_hdr_addr;
+	unsigned num, table_size;
+	unsigned long eh_hdr_addr = m->ehf_hdr.offset;
 
 	if (hdr == NULL || hdr_len < 4 || hdr[0] != 1) {
 		_stp_warn("no or bad debug frame hdr\n");
@@ -956,18 +946,18 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 	switch (hdr[3] & DW_EH_PE_FORM) {
 	case DW_EH_PE_absptr:
 		if (!compat_task)
-			tableSize = sizeof(unsigned long);
+			table_size = sizeof(unsigned long);
 		else
-			tableSize = sizeof(unsigned int);
+			table_size = sizeof(unsigned int);
 		break;
 	case DW_EH_PE_data2:
-		tableSize = 2;
+		table_size = 2;
 		break;
 	case DW_EH_PE_data4:
-		tableSize = 4;
+		table_size = 4;
 		break;
 	case DW_EH_PE_data8:
-		tableSize = 8;
+		table_size = 8;
 		break;
 	default:
 		_stp_warn("bad unwind table encoding");
@@ -978,55 +968,65 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 	{
 		// XXX Can the header validity be checked just once?
 		unsigned long eh = read_ptr_sect(&ptr, end, hdr[1], 0,
-						 eh_hdr_addr, user, compat_task, tableSize);
+						 eh_hdr_addr, user, compat_task, table_size);
 		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
 			eh = eh - (unsigned long)hdr + eh_hdr_addr;
-		if ((is_ehframe && eh != (unsigned long)m->eh_frame_addr)) {
-			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_addr = 0x%lx", eh, (unsigned long)m->eh_frame_addr);
+		if ((is_ehframe && eh != (unsigned long)m->ehf.offset)) {
+			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_offset = 0x%lx", eh, (unsigned long)m->ehf.offset);
 			return NULL;
 		}
 	}
-	num = read_ptr_sect(&ptr, end, hdr[2], 0, eh_hdr_addr, user, compat_task, tableSize);
-	if (num == 0 || num != (end - ptr) / (2 * tableSize)
-	    || (end - ptr) % (2 * tableSize)) {
+	num = read_ptr_sect(&ptr, end, hdr[2], 0, eh_hdr_addr, user, compat_task, table_size);
+	if (num == 0 || num != (end - ptr) / (2 * table_size)
+	    || (end - ptr) % (2 * table_size)) {
 		_stp_warn("unwind Bad num=%d end-ptr=%ld 2*tableSize=%d",
-			    num, (long)(end - ptr), 2 * tableSize);
+			    num, (long)(end - ptr), 2 * table_size);
 		return NULL;
 	}
 
 	do {
-		const u8 *cur = ptr + (num / 2) * (2 * tableSize);
-		startLoc = read_ptr_sect(&cur, cur + tableSize, hdr[3], 0,
-					 eh_hdr_addr, user, compat_task, tableSize);
-		startLoc = adjustStartLoc(startLoc, m, hdr[3],
+		const u8 *cur = ptr + (num / 2) * (2 * table_size);
+		start_loc = read_ptr_sect(&cur, cur + table_size, hdr[3], 0,
+					 eh_hdr_addr, user, compat_task, table_size);
+		start_loc_adj = adjust_start_loc(start_loc, m, hdr[3],
 					  is_ehframe, user, kunw_mod);
-		if (pc < startLoc)
+		if (!start_loc_adj) {
+			_stp_warn("error: bad adjusted_start_loc %lx -> %lx\n", start_loc, start_loc_adj);
+			return NULL;
+		}
+		start_loc = start_loc_adj;
+		if (pc < start_loc)
 			num /= 2;
 		else {
-			ptr = cur - tableSize;
+			ptr = cur - table_size;
 			num = (num + 1) / 2;
 		}
-	} while (startLoc && num > 1);
+	} while (start_loc && num > 1);
 
 	if (num == 1
-	    && (startLoc = adjustStartLoc(read_ptr_sect(&ptr, ptr + tableSize, hdr[3], 0,
-							eh_hdr_addr, user, compat_task, tableSize),
-					  m, hdr[3], is_ehframe, user, kunw_mod)) != 0 && pc >= startLoc) {
+	    && (start_loc = adjust_start_loc(read_ptr_sect(&ptr, ptr + table_size, hdr[3], 0,
+							eh_hdr_addr, user, compat_task, table_size),
+					  m, hdr[3], is_ehframe, user, kunw_mod)) != 0 && pc >= start_loc) {
 		unsigned long off;
-		off = read_ptr_sect(&ptr, ptr + tableSize, hdr[3],
-				    0, eh_hdr_addr, user, compat_task, tableSize);
+		off = read_ptr_sect(&ptr, ptr + table_size, hdr[3],
+				    0, eh_hdr_addr, user, compat_task, table_size);
 		dbug_unwind(1, "fde off=%lx\n", off);
 		/* For real eh_frame_hdr the actual fde address is at the
 		   new eh_frame load address. For our own debug_hdr created
 		   table the fde is an offset into the debug_frame table. */
 		if (is_ehframe)
-			fde = off - m->eh_frame_addr + m->eh_frame;
+			fde = (u32 *) (off - m->ehf.offset + m->ehf.kbuf);
 		else
-			fde = m->eh_frame + off;
+			fde = (u32 *) (m->ehf.kbuf + off);
 	}
 
-	dbug_unwind(1, "returning fde=%lx startLoc=%lx\n", (unsigned long) fde, startLoc);
+	dbug_unwind(1, "returning fde=%p start_loc=%lx\n", fde, start_loc);
 	return fde;
+}
+
+static u32 *_stp_search_cie(void)
+{
+	return NULL;
 }
 
 #define FRAME_REG(r, t) (((t *)frame)[reg_info[r].offs])
@@ -1328,15 +1328,37 @@ divzero:
 #undef	POP
 }
 
-/* Unwind to previous to frame.  Returns 0 if successful, negative
+
+/*
+struct cfi {
+	u32 *addr;
+	u8 *inst;
+	u8 *end;
+};
+
+struct ctx {
+	u32 *fde;
+	u32 *cie;
+};
+*/
+
+/*
+ * Unwind to previous frame.  Returns 0 if successful, negative
  * number in case of an error.  A positive return means unwinding is finished;
- * don't try to fallback to dumping addresses on the stack. */
-static int unwind_frame(struct unwind_context *context,
-			struct _stp_module *m,
-			void *table, uint32_t table_len, int is_ehframe,
-			int user, int compat_task,
-			struct kunwind_stp_module *kunw_mod)
+ * don't try to fallback to dumping addresses on the stack.
+ */
+static int
+__unwind_frame(struct unwind_context *context,
+	       struct kunwind_stp_module *kunw_mod,
+	       int compat_task)
 {
+	struct _stp_module *m;
+
+	void *table;
+	uint32_t table_len;
+	const int user = 1;
+	const int is_ehframe = 1;
+
 	const u32 *fde = NULL, *cie = NULL;
 	/* The start and end of the CIE CFI instructions. */
 	const u8 *cieStart = NULL, *cieEnd = NULL;
@@ -1350,15 +1372,21 @@ static int unwind_frame(struct unwind_context *context,
 	uleb128_t retAddrReg = 0;
 	struct unwind_state *state = &context->state;
 	unsigned long addr;
+	unsigned long frame_size;
+	int ret;
+
+	m = &kunw_mod->stp_mod;
+	table = m->ehf.kbuf;
+	table_len = m->ehf.size;
 
 	if (unlikely(table_len == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
 		// might actually not be there.
-		dbug_unwind(1, "Module %s: no unwind frame data\n", m->path ?: "");
+		dbug_unwind(1, "file %pD1: no unwind frame data\n", kunw_mod->elf_vma->vm_file);
 		goto err;
 	}
 	if (unlikely(table_len & (sizeof(*fde) - 1))) {
-		_stp_warn("Module %s: frame_len=%d", m->path ?: "", table_len);
+		_stp_warn("file %pD1: frame_len=%d", kunw_mod->elf_vma->vm_file, table_len);
 		goto err;
 	}
 
@@ -1369,72 +1397,37 @@ static int unwind_frame(struct unwind_context *context,
 	for (i = UNW_NR_REAL_REGS; i < ARRAY_SIZE(REG_STATE.regs); ++i)
 		set_no_state_rule(i, Nowhere, state);
 
-	fde = _stp_search_unwind_hdr(pc, m, is_ehframe, user, compat_task, kunw_mod);
-	dbug_unwind(1, "%s: fde=%lx\n", m->path ?: "", (unsigned long) fde);
+	fde = _stp_search_fde(pc, m, is_ehframe, user, compat_task, kunw_mod);
+	dbug_unwind(1, "file %pD1: fde=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) fde);
 
 	/* found the fde, now set startLoc and endLoc */
 	if (fde != NULL && is_fde(fde, table, table_len, is_ehframe)) {
 		cie = cie_for_fde(fde, table, table_len, is_ehframe);
-		dbug_unwind(1, "%s: cie=%lx\n", m->path ?: "", (unsigned long) cie);
-		if (likely(cie != NULL)) {
-			if (parse_fde_cie(fde, cie, table, table_len,
-					  &ptrType, user,
-					  &startLoc, &locRange,
-					  &fdeStart, &fdeEnd,
-					  &cieStart, &cieEnd,
-					  &state->codeAlign,
-					  &state->dataAlign,
-					  &retAddrReg,
-					  &call_frame,
-					  compat_task) < 0)
-				goto err;
-			startLoc = adjustStartLoc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
-			endLoc = startLoc + locRange;
-			dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
-			if (pc > endLoc) {
-				dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
-				goto done;
-			}
-		} else {
+		dbug_unwind(1, "%pD1: cie=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) cie);
+		if (unlikely(cie == NULL)) {
 			_stp_warn("fde found in header, but cie is bad!\n");
 			fde = NULL;
 		}
-	} else if (m->unwind_hdr == NULL) {
-	    /* Only do a linear search if there isn't a search header.
-	       There always should be one, we create it in the translator
-	       if it didn't exist. These should never be missing except
-	       when there are toolchain bugs. */
-	    unsigned long tableSize;
-	    _stp_warn("No binary search table for %s frame, doing slow linear search for %s\n", (is_ehframe ? "eh" : "debug"), m->path ?: "");
-	    for (fde = table, tableSize = table_len; cie = NULL, tableSize > sizeof(*fde)
-		 && tableSize - sizeof(*fde) >= *fde; tableSize -= sizeof(*fde) + *fde, fde += 1 + *fde / sizeof(*fde)) {
-			dbug_unwind(3, "fde=%lx tableSize=%d\n", (long)*fde, (int)tableSize);
-			if (!is_fde(fde, table, table_len, is_ehframe))
-				continue;
-			cie = cie_for_fde(fde, table, table_len, is_ehframe);
-			if (cie == NULL
-			    || parse_fde_cie(fde, cie, table, table_len,
-					     &ptrType, user,
-					     &startLoc, &locRange,
-					     &fdeStart, &fdeEnd,
-					     &cieStart, &cieEnd,
-					     &state->codeAlign,
-					     &state->dataAlign,
-					     &retAddrReg,
-					     &call_frame, compat_task) < 0)
-				break;
-			startLoc = adjustStartLoc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
-			if (!startLoc)
-				continue;
-			endLoc = startLoc + locRange;
-// removal because this is a way of checking if the next fde is in range, if the fde's aren't sorted (which is why we're doing a linear search in the first place, than this check is bogus
-                        /*if (pc > endLoc) {
-                                dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
-				goto done;
-				}*/
-			dbug_unwind(3, "endLoc=%lx\n", endLoc);
-			if (pc >= startLoc && pc < endLoc)
-				break;
+
+		ret = parse_fde_cie(fde, cie, table, table_len, &ptrType, user,
+				&startLoc, &locRange, &fdeStart, &fdeEnd,
+				&cieStart, &cieEnd, &state->codeAlign,
+				&state->dataAlign, &retAddrReg, &call_frame,
+				compat_task);
+		if (ret < 0) {
+			_stp_warn("error: parse_fde_cie returned %d\n", ret);
+			goto err;
+		}
+		startLoc = adjust_start_loc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
+		if (!startLoc) {
+			_stp_warn("error: bad adjust_start_loc: %lx", startLoc);
+			goto err;
+		}
+		endLoc = startLoc + locRange;
+		dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
+		if (pc > endLoc) {
+			dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
+			goto done;
 		}
 	}
 
@@ -1460,7 +1453,7 @@ static int unwind_frame(struct unwind_context *context,
 
 	/* Common Information Entry (CIE) instructions. */
 	dbug_unwind (1, "processCFI for CIE\n");
-	if (!processCFI(cieStart, cieEnd, 0, ptrType, user, state, compat_task))
+	if (!run_cfi_program(cieStart, cieEnd, 0, ptrType, user, state, compat_task))
 		goto err;
 
 	/* Store initial state registers for use with DW_CFA_restore... */
@@ -1468,7 +1461,7 @@ static int unwind_frame(struct unwind_context *context,
 
 	/* Process Frame Description Entry (FDE) instructions. */
 	dbug_unwind (1, "processCFI for FDE\n");
-	if (!processCFI(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
+	if (!run_cfi_program(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
 	    || state->loc > endLoc)
 		goto err;
 	if (REG_STATE.regs[retAddrReg].where == Nowhere)
@@ -1490,16 +1483,17 @@ static int unwind_frame(struct unwind_context *context,
 			    REG_STATE.cfa.reg, REG_STATE.cfa.off);
 		cfa = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
 	}
-	startLoc = min((unsigned long)UNW_SP(frame), cfa);
-	endLoc = max((unsigned long)UNW_SP(frame), cfa);
-	dbug_unwind(1, "cfa=%lx startLoc=%lx, endLoc=%lx\n", cfa, startLoc, endLoc);
-	if (STACK_LIMIT(startLoc) != STACK_LIMIT(endLoc)) {
-		startLoc = min(STACK_LIMIT(cfa), cfa);
-		endLoc = max(STACK_LIMIT(cfa), cfa);
-		dbug_unwind(1, "cfa startLoc=%lx, endLoc=%lx\n",
-                            (unsigned long)startLoc, (unsigned long)endLoc);
-	}
-	dbug_unwind(1, "cie=%lx fde=%lx\n", (unsigned long) cie, (unsigned long) fde);
+
+	/* Here, the CFA value is known */
+	frame_size = abs(cfa - UNW_SP(frame));
+	dbug_unwind(1, "recovered cfa=%lx, rsp=%lx (frame size=%lu)\n", cfa, UNW_SP(frame), frame_size);
+
+	dbug_unwind(1, "check RSP invalid=%d UNW_RSP=%lu RSP=%llu where=%d\n",
+			REG_INVALID(RSP),
+			UNW_SP(frame),
+			FRAME_REG(RSP, const u64),
+			REG_STATE.regs[RSP].where);
+
 	for (i = 0; i < ARRAY_SIZE(REG_STATE.regs); ++i) {
 		if (REG_INVALID(i)) {
 			if (REG_STATE.regs[i].where == Nowhere)
@@ -1644,78 +1638,57 @@ bottom:
 #undef FRAME_REG
 }
 
-int unwind(struct unwind_context *context, int user,
-	   struct kunwind_proc_modules *proc)
+//int is_standard_frame(struct unwind_reg_state *rs)
+//{
+//	return ((rs->regs[DWARF_CFA_REG_COLUMN].where == Register)
+//		&& (rs->regs[DWARF_CFA_REG_COLUMN].state.reg == RBP
+//			|| rs->regs[DWARF_CFA_REG_COLUMN].val == RSP)
+//		&& labs((long) rs->regs[DWARF_CFA_OFF_COLUMN].val) < (1 << 29)
+//		&& DWARF_GET_LOC(d->loc[d->ret_addr_column]) == d->cfa-8
+//		&& (rs->reg[RBP].where == DWARF_WHERE_UNDEF
+//			|| rs->reg[RBP].where == DWARF_WHERE_SAME
+//			|| (rs->reg[RBP].where == DWARF_WHERE_CFAREL
+//				&& labs((long) rs->reg[RBP].val) < (1 << 14)
+//				&& rs->reg[RBP].val+1 != 0))
+//		&& (rs->reg[RSP].where == DWARF_WHERE_UNDEF
+//			|| rs->reg[RSP].where == DWARF_WHERE_SAME
+//			|| (rs->reg[RSP].where == DWARF_WHERE_CFAREL
+//				&& labs((long) rs->reg[RSP].val) < (1 << 14)
+//				&& rs->reg[RSP].val+1 != 0)));
+//}
+
+int unwind_frame(struct unwind_context *context, int user,
+		 struct kunwind_proc_modules *proc)
 {
-	struct _stp_module *m;
-	struct kunwind_stp_module *kunw_mod = NULL;
+	struct kunwind_stp_module *mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
-	unsigned long pc = UNW_PC(frame) - frame->call_frame;
-	int res;
-        const char *module_name = 0;
-	/* compat_task is a flag for 32bit process unwinding on a 64-bit
-	   architecture.  If this flag is set, it means a mapping of
-	   register numbers is required, as well as being aware of 32-bit
-	   values on 64-bit registers. */
+	unsigned long pc = get_pc(frame);
+        int res;
+
+	/*
+	 * compat_task is a flag for 32bit process unwinding on a 64-bit
+	 * architecture.  If this flag is set, it means a mapping of
+	 * register numbers is required, as well as being aware of 32-bit
+	 * values on 64-bit registers.
+	 */
 	int compat_task = _stp_is_compat_task();
 
-	dbug_unwind(1, "pc=%lx, %llx\n", pc,
-		    (unsigned long long) UNW_PC(frame));
+	dbug_unwind(1, "pc=%lx compat_task=%d\n", pc, compat_task);
 
-	if (UNW_PC(frame) == 0)
+	if (!pc || !user)
 		return -EINVAL;
 
-	if (user)
-	  {
-		  kunw_mod = kunw_mod_lookup(pc, proc);
-		  m = &(kunw_mod->stp_mod);
-	  }
-	else
-          {
-            m = NULL;// _stp_kmod_sec_lookup (pc, &s); // FIXME will we support unwinding of kernel code
-            if (!m) {
-#ifdef STAPCONF_MODULE_TEXT_ADDRESS
-                struct module *ko;
-                preempt_disable();
-                ko = __module_text_address (pc);
-                if (ko) { module_name = ko->name; }
-                else {
-                  /* Possible heuristic: we could assume we're talking
-                     about the kernel.  If __kernel_text_address()
-                     were SYMBOL_EXPORT'd, we could call that and be
-                     more sure. */
-                }
-                preempt_enable_no_resched();
-#endif
-            }
-          }
+	mod = kunw_mod_lookup(pc, proc);
 
-	if (unlikely(m == NULL)) {
-                // some heuristics for the module name; we can't call
-                // kernel_text_address or friends from this context.
-                if (! module_name && (unsigned long)pc > PAGE_OFFSET)
-                        module_name = "kernel";
-                _stp_warn ("Missing unwind data for a module, rerun with 'stap -d %s'\n",
-                           module_name ?: "(unknown; retry with -DDEBUG_UNWIND)");
-		// Don't _stp_warn including the pc#, since it'll defeat warning deduplicator
-		dbug_unwind(1, "No module found for pc=%lx\n", pc);
+	if (mod == NULL)
 		return -EINVAL;
-	}
 
-	dbug_unwind(1, "trying eh_frame\n");
-	res = unwind_frame (context, m, m->eh_frame,
-			    m->eh_frame_len, 1, user, compat_task,
-			    kunw_mod);
+	res = __unwind_frame(context, mod, compat_task);
 
 	dbug_unwind (2, "unwind_frame returned: %d\n", res);
 	return res;
 }
 
-
-unsigned long get_pc(struct unwind_frame_info *info)
-{
-	return UNW_PC(info) - info->call_frame;
-}
 
 int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
@@ -1738,7 +1711,7 @@ int unwind_full(struct unwind_context *context,
 		bt->entries[bt->nr_entries++] = pc;
 		dbug_unwind(1, "nr_entries %u, ip %p\n", bt->nr_entries, (void *) pc);
 
-		ret = unwind(context, 1, proc);
+		ret = unwind_frame(context, 1, proc);
 
 		if (ret != 0)
 			break;
@@ -1751,21 +1724,24 @@ int unwind_full(struct unwind_context *context,
 }
 EXPORT_SYMBOL_GPL(unwind_full);
 
-int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end, int compat,
-		      u8 *hdr, unsigned long hdr_addr, unsigned long hdr_len,
-		      u8 **eh_frame, unsigned long *eh_frame_addr, unsigned long *eh_frame_len)
+int eh_frame_from_hdr(void *base, unsigned long vma_start,
+		unsigned long vma_end, int compat, struct section *ehf_hdr,
+		struct section *ehf)
 {
-	unsigned long eh_addr, eh_len, cie_fde_size = 0;
+	unsigned long eh_addr, eh_off, eh_len, cie_fde_size = 0;
 	const u8* pos;
 	u8 *eh, *ptr, *prev_ptr;
+	u8 *hdr = ehf_hdr->kbuf;
+	unsigned long hdr_addr = ehf_hdr->offset;
+	unsigned long hdr_len = ehf_hdr->size;
 
 	// FIXME -1 tablesize might not be right in following call
 	pos = hdr + 4;
-	eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], vma_start,
-				hdr_addr, 1, compat, -1);
-	if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
-		eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
-	eh = (void *)(eh_addr + base);
+	eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], vma_start, hdr_addr, 1, compat, -1);
+	eh_off = eh_addr - (unsigned long)base;
+	eh = (u8 *) eh_addr;
+	dbug_unwind(3, "eh: 0x%lx\n", (unsigned long)eh);
+	dbug_unwind(3, "offset: 0x%lx\n", eh_off);
 
 	// Find eh_frame size
 	ptr = prev_ptr = eh;
@@ -1785,8 +1761,10 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 		prev_ptr = ptr;
 	} while (cie_fde_size);
 
-	*eh_frame = eh;
-	*eh_frame_addr = eh_addr;
-	*eh_frame_len = eh_len;
+	ehf->kbuf = eh;
+	ehf->offset = eh_off;
+	ehf->size = eh_len;
+	ehf->ubuf = ehf_hdr->ubuf - ehf_hdr->offset + ehf->offset; // FIXME: verify
+
 	return 0;
 }

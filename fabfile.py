@@ -84,8 +84,11 @@ def test():
     ]
     
     # the real test here is to copy the file if it is newer
-    if not exists("libkunwind/configure.ac"):
-        put("libkunwind/configure.ac", "libkunwind")
+    configure_script = "libkunwind/configure.ac"
+    if not exists(configure_script):
+        dest = os.path.dirname(configure_script)
+        run("mkdir -p \"{}\"".format(dest))
+        put(configure_script, dest)
 
     for pattern in patterns:
         matches = glob.glob(pattern)

@@ -15,48 +15,6 @@
 #include "vma_file_path.h"
 #include "unwind/unwind.h"
 
-int fill_eh_frame_info(struct kunwind_stp_module *mod,
-		       struct kunwind_proc_modules *proc)
-{
-	u8 *eh, *hdr;
-	unsigned long eh_addr, eh_len, hdr_addr, hdr_len;
-	int err;
-
-	// Use the .eh_frame_hdr pointer to find the .eh_frame section
-	hdr = mod->stp_mod.unwind_hdr;
-	hdr_addr = mod->stp_mod.unwind_hdr_addr;
-	hdr_len = mod->stp_mod.unwind_hdr_len;
-
-	err =  eh_frame_from_hdr(mod->base, mod->vma_start,
-				 mod->vma_end, proc->compat,
-				 hdr, hdr_addr, hdr_len,
-				 &eh, &eh_addr, &eh_len);
-
-	if (err) return err;
-
-	mod->stp_mod.eh_frame_addr = eh_addr;
-	mod->stp_mod.eh_frame_len = eh_len;
-	mod->stp_mod.eh_frame = eh;
-
-	return 0;
-}
-
-int fill_mod_path(struct kunwind_stp_module *mod)
-{
-	char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-	path = vma_file_path(mod->vma, buf, LINFO_PATHLEN);
-	if (path) {
-		kfree(mod->stp_mod.buf);
-		mod->stp_mod.buf = buf;
-		mod->stp_mod.path = path;
-	} else {
-		kfree(buf);
-	}
-	return 0;
-}
-
 /*
  * linfo must at least have eh_frame_hdr_addr and eh_frame_hdr_len
  */
@@ -65,109 +23,111 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		struct kunwind_stp_module *mod,
 		struct kunwind_proc_modules *proc)
 {
-	void *base;
+	int i;
 	int res;
 	unsigned long npages;
 	struct page **pages;
-	struct vm_area_struct *vma;
 	unsigned long test;
-	char *path = 0;
 
 	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
-	mod->stp_mod.name = ""; // TODO fill if necessary or remove
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
-	vma = mod->vma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
+	mod->elf_vma = find_vma(task->mm, linfo->eh_frame_hdr_ubuf);
 
 	// Get the vma pages
-	npages = vma_pages(vma);
+	npages = vma_pages(mod->elf_vma);
 	pages = kmalloc(sizeof(struct page *) * npages, GFP_KERNEL);
 	if (!pages) {
 		res = -ENOMEM;
-		goto FREEPATH;
+		goto out;
 	}
 
-	res = __get_user_pages_unlocked(task, task->mm, vma->vm_start,
+	/*
+	 * FIXME: add missing put_page() and check pinned size
+	 * See example: drivers/infiniband/hw/hfi1/user_pages.c
+	 */
+	res = __get_user_pages_unlocked(task, task->mm, mod->elf_vma->vm_start,
 			npages, 0, 0, pages, FOLL_TOUCH);
-	if (res < 0) goto FREEPAGES;
+	if (res < 0)
+		goto out_free_pages;
 	npages = res;
 
-	// Vmap the pages so that we can access eh_frame directly.  We
-	// map the full vma because it was easier to write, but we
-	// should only vmap the pages containing unwinding info. TODO
-	base = vmap(pages, npages, vma->vm_flags, vma->vm_page_prot);
-	dbug_unwind(1, "vmap kernel addr: %p\n", base);
+	/*
+	 * vmap the pages containing the eh_frame for direct
+	 * access without copy_from_user.
+	 */
+	mod->elf_vmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
+	dbug_unwind(1, "vmap kernel addr: %p\n", mod->elf_vmap);
 
-	// bookkeeping info
-	mod->base = base;
-	mod->vma_start = vma->vm_start;
-	mod->vma_end = vma->vm_end;
+	if (!mod->elf_vmap)
+		goto out_put_pages;
+
 	mod->pages = pages;
 	mod->npages = npages;
-	// eh_frame_hdr info
-	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->vma_start;
-	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
-	mod->stp_mod.unwind_hdr = mod->base + mod->stp_mod.unwind_hdr_addr;
-	//  dynamic/absolute
+
+	/* eh_frame_hdr */
+	mod->stp_mod.ehf_hdr.ubuf = (void *) linfo->eh_frame_hdr_ubuf;
+	mod->stp_mod.ehf_hdr.size = linfo->eh_frame_hdr_size;
+	mod->stp_mod.ehf_hdr.offset = linfo->eh_frame_hdr_ubuf - mod->elf_vma->vm_start;
+	mod->stp_mod.ehf_hdr.kbuf = mod->elf_vmap + mod->stp_mod.ehf_hdr.offset;
 	mod->stp_mod.is_dynamic = linfo->dynamic;
-	mod->stp_mod.static_addr = vma->vm_start;
 
-	// eh_frame info
-	if (!linfo->eh_frame_addr || !linfo->eh_frame_size) {
-		res = fill_eh_frame_info(mod, proc);
-		if (res) goto FREEPAGES;
+	/* eh_frame */
+	if (linfo->eh_frame_addr && linfo->eh_frame_size) {
+		/* the userspace provides eh_frame location */
+		mod->stp_mod.ehf.ubuf = (void *) linfo->eh_frame_addr;
+		mod->stp_mod.ehf.size = linfo->eh_frame_size;
+		mod->stp_mod.ehf.offset = linfo->eh_frame_addr - mod->elf_vma->vm_start;
+		mod->stp_mod.ehf.kbuf = mod->elf_vmap + mod->stp_mod.ehf.offset;
 	} else {
-		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->vma_start;
-		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
-		mod->stp_mod.eh_frame = mod->base + mod->stp_mod.eh_frame_addr;
+		/* find the eh_frame location ourselves */
+		res = eh_frame_from_hdr(mod->elf_vmap, mod->elf_vma->vm_start,
+				mod->elf_vma->vm_end, proc->compat,
+				&mod->stp_mod.ehf_hdr, &mod->stp_mod.ehf);
+
+		dbug_unwind(1, "fill_eh_frame_info %d\n", res);
+		if (res)
+			goto out_vunmap;
 	}
 
-	// Module path
-	if (strnlen(linfo->path, LINFO_PATHLEN)) {
-		path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-		if (!path)
-			return -ENOMEM;
-		strncpy(path, linfo->path, LINFO_PATHLEN);
-		mod->stp_mod.buf = mod->stp_mod.path = path;
-	} else {
-		res = fill_mod_path(mod);
-		if (res) return res;
+	dbug_unwind(1, "Loaded module from %pD1\n", mod->elf_vma->vm_file);
+
+	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_ubuf);
+	if (res < 0)
+		goto out_vunmap;
+	if (test != *((unsigned long *) mod->stp_mod.ehf_hdr.kbuf)) {
+		WARN_ON_ONCE("Bad eh_frame virtual kernel address.");
+		goto out_vunmap;
 	}
-
-	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
-
-	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
-	if (res < 0) goto FREEPAGES;
-	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr))
-		KUNWIND_BUGM("Bad eh_frame virtual kernel address.");
-
 	return 0;
-FREEPAGES:
+
+
+out_vunmap:
+	vunmap(mod->elf_vmap);
+out_put_pages:
+	for (i = 0; i < npages; ++i) {
+		put_page(pages[i]);
+	}
+out_free_pages:
 	kfree(pages);
-FREEPATH:
-	kfree(path);
-	mod->stp_mod.buf = mod->stp_mod.path = NULL;
-	dbug_unwind(1, "Failed to load module at virtual address %lx\n", vma->vm_start);
+out:
+	dbug_unwind(1, "Failed to load module at virtual address %lx\n", mod->elf_vma->vm_start);
 	return res;
 }
 
 static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
-	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->base);
-	kfree(mod->stp_mod.buf);
-	mod->stp_mod.buf = mod->stp_mod.path = NULL;
-	vunmap(mod->base);
-	mod->base = NULL;
+	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->elf_vmap);
+	vunmap(mod->elf_vmap);
+	mod->elf_vmap = NULL;
 	for (i = 0; i < mod->npages; ++i) {
 		put_page(mod->pages[i]);
 	}
 	kfree(mod->pages);
 	mod->npages = 0;
 	mod->pages = NULL;
-	mod->vma_start = 0;
-	mod->vma_end = 0;
 }
 
 int init_proc_unwind_info(struct kunwind_proc_modules *mods,
@@ -223,7 +183,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 
 	// Fill linfo
 	linfo.obj_addr = info->addr;
-	linfo.eh_frame_hdr_addr = info->addr + eh_phdr->p_vaddr;
+	linfo.eh_frame_hdr_ubuf = info->addr + eh_phdr->p_vaddr;
 	linfo.eh_frame_hdr_size = eh_phdr->p_memsz;
 	linfo.dynamic = dynamic;
 
