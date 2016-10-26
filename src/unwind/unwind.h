@@ -415,7 +415,7 @@ struct unwind_reg_state {
 };
 
 struct unwind_state {
-	uleb128_t loc;
+	uleb128_t loc;						/* instruction address */
 	uleb128_t codeAlign;
 	sleb128_t dataAlign;
 	unsigned stackDepth:8;

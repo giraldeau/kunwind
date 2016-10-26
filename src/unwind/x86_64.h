@@ -29,10 +29,34 @@
 #ifdef STAPCONF_X86_UNIREGS
 #define UNW_PC(frame)        (frame)->regs.ip
 #define UNW_SP(frame)        (frame)->regs.sp
+#define UNW_BP(frame)        (frame)->regs.bp
 #else
 #define UNW_PC(frame)        (frame)->regs.rip
 #define UNW_SP(frame)        (frame)->regs.rsp
+#define UNW_BP(frame)        (frame)->regs.rbp
 #endif /* STAPCONF_X86_UNIREGS */
+
+/* This cache structure comes from libunwind */
+typedef enum
+  {
+    UNW_X86_64_FRAME_STANDARD = -2,     /* regular rbp, rsp +/- offset */
+    UNW_X86_64_FRAME_SIGRETURN = -1,    /* special sigreturn frame */
+    UNW_X86_64_FRAME_OTHER = 0,         /* not cacheable (special or unrecognised) */
+    UNW_X86_64_FRAME_GUESSED = 1        /* guessed it was regular, but not known */
+  }
+unw_tdep_frame_type_t;
+
+typedef struct
+  {
+    u64 virtual_address;
+    u64 frame_type     : 2;  /* unw_tdep_frame_type_t classification */
+    u64 last_frame     : 1;  /* non-zero if last frame in chain */
+    u64 cfa_reg_rsp    : 1;  /* cfa dwarf base register is rsp vs. rbp */
+    u64 cfa_reg_offset : 30; /* cfa is at this offset from base register value */
+    u64 rbp_cfa_offset : 15; /* rbp saved at this offset from cfa (-1 = not saved) */
+    u64 rsp_cfa_offset : 15; /* rsp saved at this offset from cfa (-1 = not saved) */
+  }
+unw_tdep_frame_t;
 
 /* Might need to account for the special exception and interrupt handling
    stacks here, since normally
@@ -42,6 +66,25 @@
    and the overhead of comparing against all exception handling stacks seems
    not desirable. */
 #define STACK_LIMIT(ptr)     (((ptr) - 1) & ~(THREAD_SIZE - 1))
+
+/* FIXME: this seems redefinitions */
+#define RAX 0
+#define RDX 1
+#define RCX 2
+#define RBX 3
+#define RSI 4
+#define RDI 5
+#define RBP 6
+#define RSP 7
+#define R8 8
+#define R9 9
+#define R10 10
+#define R11 11
+#define R12 12
+#define R13 13
+#define R14 14
+#define R15 15
+#define RIP_STUB 16
 
 #ifdef STAPCONF_X86_UNIREGS
 #define UNW_REGISTER_INFO \

@@ -32,7 +32,8 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 				 hdr, hdr_addr, hdr_len,
 				 &eh, &eh_addr, &eh_len);
 
-	if (err) return err;
+	if (err)
+		return err;
 
 	mod->stp_mod.eh_frame_addr = eh_addr;
 	mod->stp_mod.eh_frame_len = eh_len;

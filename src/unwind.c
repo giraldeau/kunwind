@@ -172,6 +172,12 @@ static unsigned long read_pointer(const u8 **pLoc, const void *end, signed ptrTy
 	return read_ptr_sect(pLoc, end, ptrType, 0, 0, user, compat_task, 0);
 }
 
+static inline unsigned long
+get_pc(struct unwind_frame_info *info)
+{
+	return UNW_PC(info) - info->call_frame;
+}
+
 static int
 stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
 			    unsigned long *vm_start, unsigned long *vm_end,
@@ -480,7 +486,7 @@ static void set_expr_rule(uleb128_t reg, enum item_location where,
    512 should be enough for anybody... */
 #define MAX_CFI 512
 
-static int processCFI(const u8 *start, const u8 *end, unsigned long targetLoc,
+static int run_cfi_program(const u8 *start, const u8 *end, unsigned long targetLoc,
 		      signed ptrType, int user, struct unwind_state *state, int compat_task)
 {
 	union {
@@ -934,9 +940,9 @@ adjustStartLoc (unsigned long startLoc,
 
 /* If we previously created an unwind header, then use it now to binary search */
 /* for the FDE corresponding to pc. */
-static u32 *_stp_search_unwind_hdr(unsigned long pc,
-				   struct _stp_module *m,
-				   int is_ehframe, int user, int compat_task, struct kunwind_stp_module *kunw_mod)
+static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
+			    int is_ehframe, int user, int compat_task,
+			    struct kunwind_stp_module *kunw_mod)
 {
 	const u8 *ptr, *end, *hdr = m->unwind_hdr;
 	uint32_t hdr_len = m->unwind_hdr_len;
@@ -1027,6 +1033,11 @@ static u32 *_stp_search_unwind_hdr(unsigned long pc,
 
 	dbug_unwind(1, "returning fde=%lx startLoc=%lx\n", (unsigned long) fde, startLoc);
 	return fde;
+}
+
+static u32 *_stp_search_cie(void)
+{
+	return NULL;
 }
 
 #define FRAME_REG(r, t) (((t *)frame)[reg_info[r].offs])
@@ -1328,9 +1339,25 @@ divzero:
 #undef	POP
 }
 
-/* Unwind to previous to frame.  Returns 0 if successful, negative
+
+/*
+struct cfi {
+	u32 *addr;
+	u8 *inst;
+	u8 *end;
+};
+
+struct ctx {
+	u32 *fde;
+	u32 *cie;
+};
+*/
+
+/*
+ * Unwind to previous frame.  Returns 0 if successful, negative
  * number in case of an error.  A positive return means unwinding is finished;
- * don't try to fallback to dumping addresses on the stack. */
+ * don't try to fallback to dumping addresses on the stack.
+ */
 static int
 __unwind_frame(struct unwind_context *context,
 	       struct kunwind_stp_module *kunw_mod,
@@ -1356,6 +1383,8 @@ __unwind_frame(struct unwind_context *context,
 	uleb128_t retAddrReg = 0;
 	struct unwind_state *state = &context->state;
 	unsigned long addr;
+	unsigned long frame_size;
+	int ret;
 
 	m = &kunw_mod->stp_mod;
 	table = m->eh_frame;
@@ -1379,35 +1408,33 @@ __unwind_frame(struct unwind_context *context,
 	for (i = UNW_NR_REAL_REGS; i < ARRAY_SIZE(REG_STATE.regs); ++i)
 		set_no_state_rule(i, Nowhere, state);
 
-	fde = _stp_search_unwind_hdr(pc, m, is_ehframe, user, compat_task, kunw_mod);
+	fde = _stp_search_fde(pc, m, is_ehframe, user, compat_task, kunw_mod);
 	dbug_unwind(1, "%s: fde=%lx\n", m->path ?: "", (unsigned long) fde);
 
 	/* found the fde, now set startLoc and endLoc */
 	if (fde != NULL && is_fde(fde, table, table_len, is_ehframe)) {
 		cie = cie_for_fde(fde, table, table_len, is_ehframe);
 		dbug_unwind(1, "%s: cie=%lx\n", m->path ?: "", (unsigned long) cie);
-		if (likely(cie != NULL)) {
-			if (parse_fde_cie(fde, cie, table, table_len,
-					  &ptrType, user,
-					  &startLoc, &locRange,
-					  &fdeStart, &fdeEnd,
-					  &cieStart, &cieEnd,
-					  &state->codeAlign,
-					  &state->dataAlign,
-					  &retAddrReg,
-					  &call_frame,
-					  compat_task) < 0)
-				goto err;
-			startLoc = adjustStartLoc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
-			endLoc = startLoc + locRange;
-			dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
-			if (pc > endLoc) {
-				dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
-				goto done;
-			}
-		} else {
+		if (unlikely(cie == NULL)) {
 			_stp_warn("fde found in header, but cie is bad!\n");
 			fde = NULL;
+		}
+
+		ret = parse_fde_cie(fde, cie, table, table_len, &ptrType, user,
+				&startLoc, &locRange, &fdeStart, &fdeEnd,
+				&cieStart, &cieEnd, &state->codeAlign,
+				&state->dataAlign, &retAddrReg, &call_frame,
+				compat_task);
+		if (ret < 0) {
+			_stp_warn("error: parse_fde_cie returned %d\n", ret);
+			goto err;
+		}
+		startLoc = adjustStartLoc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
+		endLoc = startLoc + locRange;
+		dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
+		if (pc > endLoc) {
+			dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
+			goto done;
 		}
 	} else if (m->unwind_hdr == NULL) {
 	    /* Only do a linear search if there isn't a search header.
@@ -1470,7 +1497,7 @@ __unwind_frame(struct unwind_context *context,
 
 	/* Common Information Entry (CIE) instructions. */
 	dbug_unwind (1, "processCFI for CIE\n");
-	if (!processCFI(cieStart, cieEnd, 0, ptrType, user, state, compat_task))
+	if (!run_cfi_program(cieStart, cieEnd, 0, ptrType, user, state, compat_task))
 		goto err;
 
 	/* Store initial state registers for use with DW_CFA_restore... */
@@ -1478,7 +1505,7 @@ __unwind_frame(struct unwind_context *context,
 
 	/* Process Frame Description Entry (FDE) instructions. */
 	dbug_unwind (1, "processCFI for FDE\n");
-	if (!processCFI(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
+	if (!run_cfi_program(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
 	    || state->loc > endLoc)
 		goto err;
 	if (REG_STATE.regs[retAddrReg].where == Nowhere)
@@ -1500,16 +1527,17 @@ __unwind_frame(struct unwind_context *context,
 			    REG_STATE.cfa.reg, REG_STATE.cfa.off);
 		cfa = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
 	}
-	startLoc = min((unsigned long)UNW_SP(frame), cfa);
-	endLoc = max((unsigned long)UNW_SP(frame), cfa);
-	dbug_unwind(1, "cfa=%lx startLoc=%lx, endLoc=%lx\n", cfa, startLoc, endLoc);
-	if (STACK_LIMIT(startLoc) != STACK_LIMIT(endLoc)) {
-		startLoc = min(STACK_LIMIT(cfa), cfa);
-		endLoc = max(STACK_LIMIT(cfa), cfa);
-		dbug_unwind(1, "cfa startLoc=%lx, endLoc=%lx\n",
-                            (unsigned long)startLoc, (unsigned long)endLoc);
-	}
-	dbug_unwind(1, "cie=%lx fde=%lx\n", (unsigned long) cie, (unsigned long) fde);
+
+	/* Here, the CFA value is known */
+	frame_size = abs(cfa - UNW_SP(frame));
+	dbug_unwind(1, "recovered cfa=%lx, rsp=%lx (frame size=%lu)\n", cfa, UNW_SP(frame), frame_size);
+
+	dbug_unwind(1, "check RSP invalid=%d UNW_RSP=%lu RSP=%llu where=%d\n",
+			REG_INVALID(RSP),
+			UNW_SP(frame),
+			FRAME_REG(RSP, const u64),
+			REG_STATE.regs[RSP].where);
+
 	for (i = 0; i < ARRAY_SIZE(REG_STATE.regs); ++i) {
 		if (REG_INVALID(i)) {
 			if (REG_STATE.regs[i].where == Nowhere)
@@ -1654,15 +1682,27 @@ bottom:
 #undef FRAME_REG
 }
 
-static unsigned long
-get_pc(struct unwind_frame_info *info)
-{
-	return UNW_PC(info) - info->call_frame;
-}
+//int is_standard_frame(struct unwind_reg_state *rs)
+//{
+//	return ((rs->regs[DWARF_CFA_REG_COLUMN].where == Register)
+//		&& (rs->regs[DWARF_CFA_REG_COLUMN].state.reg == RBP
+//			|| rs->regs[DWARF_CFA_REG_COLUMN].val == RSP)
+//		&& labs((long) rs->regs[DWARF_CFA_OFF_COLUMN].val) < (1 << 29)
+//		&& DWARF_GET_LOC(d->loc[d->ret_addr_column]) == d->cfa-8
+//		&& (rs->reg[RBP].where == DWARF_WHERE_UNDEF
+//			|| rs->reg[RBP].where == DWARF_WHERE_SAME
+//			|| (rs->reg[RBP].where == DWARF_WHERE_CFAREL
+//				&& labs((long) rs->reg[RBP].val) < (1 << 14)
+//				&& rs->reg[RBP].val+1 != 0))
+//		&& (rs->reg[RSP].where == DWARF_WHERE_UNDEF
+//			|| rs->reg[RSP].where == DWARF_WHERE_SAME
+//			|| (rs->reg[RSP].where == DWARF_WHERE_CFAREL
+//				&& labs((long) rs->reg[RSP].val) < (1 << 14)
+//				&& rs->reg[RSP].val+1 != 0)));
+//}
 
-static int
-unwind_frame(struct unwind_context *context, int user,
-	   struct kunwind_proc_modules *proc)
+int unwind_frame(struct unwind_context *context, int user,
+		 struct kunwind_proc_modules *proc)
 {
 	struct kunwind_stp_module *mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
@@ -1692,6 +1732,7 @@ unwind_frame(struct unwind_context *context, int user,
 	dbug_unwind (2, "unwind_frame returned: %d\n", res);
 	return res;
 }
+
 
 int unwind_full(struct unwind_context *context,
 		struct kunwind_proc_modules *proc,
