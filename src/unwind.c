@@ -1331,12 +1331,18 @@ divzero:
 /* Unwind to previous to frame.  Returns 0 if successful, negative
  * number in case of an error.  A positive return means unwinding is finished;
  * don't try to fallback to dumping addresses on the stack. */
-static int unwind_frame(struct unwind_context *context,
-			struct _stp_module *m,
-			void *table, uint32_t table_len, int is_ehframe,
-			int user, int compat_task,
-			struct kunwind_stp_module *kunw_mod)
+static int
+__unwind_frame(struct unwind_context *context,
+	       struct kunwind_stp_module *kunw_mod,
+	       int compat_task)
 {
+	struct _stp_module *m;
+
+	void *table;
+	uint32_t table_len;
+	const int user = 1;
+	const int is_ehframe = 1;
+
 	const u32 *fde = NULL, *cie = NULL;
 	/* The start and end of the CIE CFI instructions. */
 	const u8 *cieStart = NULL, *cieEnd = NULL;
@@ -1350,6 +1356,10 @@ static int unwind_frame(struct unwind_context *context,
 	uleb128_t retAddrReg = 0;
 	struct unwind_state *state = &context->state;
 	unsigned long addr;
+
+	m = &kunw_mod->stp_mod;
+	table = m->eh_frame;
+	table_len = m->eh_frame_len;
 
 	if (unlikely(table_len == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
@@ -1644,77 +1654,43 @@ bottom:
 #undef FRAME_REG
 }
 
-int unwind(struct unwind_context *context, int user,
+static unsigned long
+get_pc(struct unwind_frame_info *info)
+{
+	return UNW_PC(info) - info->call_frame;
+}
+
+static int
+unwind_frame(struct unwind_context *context, int user,
 	   struct kunwind_proc_modules *proc)
 {
-	struct _stp_module *m;
-	struct kunwind_stp_module *kunw_mod = NULL;
+	struct kunwind_stp_module *mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
-	unsigned long pc = UNW_PC(frame) - frame->call_frame;
-	int res;
-        const char *module_name = 0;
-	/* compat_task is a flag for 32bit process unwinding on a 64-bit
-	   architecture.  If this flag is set, it means a mapping of
-	   register numbers is required, as well as being aware of 32-bit
-	   values on 64-bit registers. */
+	unsigned long pc = get_pc(frame);
+        int res;
+
+	/*
+	 * compat_task is a flag for 32bit process unwinding on a 64-bit
+	 * architecture.  If this flag is set, it means a mapping of
+	 * register numbers is required, as well as being aware of 32-bit
+	 * values on 64-bit registers.
+	 */
 	int compat_task = _stp_is_compat_task();
 
-	dbug_unwind(1, "pc=%lx, %llx\n", pc,
-		    (unsigned long long) UNW_PC(frame));
+	dbug_unwind(1, "pc=%lx compat_task=%d\n", pc, compat_task);
 
-	if (UNW_PC(frame) == 0)
+	if (!pc || !user)
 		return -EINVAL;
 
-	if (user)
-	  {
-		  kunw_mod = kunw_mod_lookup(pc, proc);
-		  m = &(kunw_mod->stp_mod);
-	  }
-	else
-          {
-            m = NULL;// _stp_kmod_sec_lookup (pc, &s); // FIXME will we support unwinding of kernel code
-            if (!m) {
-#ifdef STAPCONF_MODULE_TEXT_ADDRESS
-                struct module *ko;
-                preempt_disable();
-                ko = __module_text_address (pc);
-                if (ko) { module_name = ko->name; }
-                else {
-                  /* Possible heuristic: we could assume we're talking
-                     about the kernel.  If __kernel_text_address()
-                     were SYMBOL_EXPORT'd, we could call that and be
-                     more sure. */
-                }
-                preempt_enable_no_resched();
-#endif
-            }
-          }
+	mod = kunw_mod_lookup(pc, proc);
 
-	if (unlikely(m == NULL)) {
-                // some heuristics for the module name; we can't call
-                // kernel_text_address or friends from this context.
-                if (! module_name && (unsigned long)pc > PAGE_OFFSET)
-                        module_name = "kernel";
-                _stp_warn ("Missing unwind data for a module, rerun with 'stap -d %s'\n",
-                           module_name ?: "(unknown; retry with -DDEBUG_UNWIND)");
-		// Don't _stp_warn including the pc#, since it'll defeat warning deduplicator
-		dbug_unwind(1, "No module found for pc=%lx\n", pc);
+	if (mod == NULL)
 		return -EINVAL;
-	}
 
-	dbug_unwind(1, "trying eh_frame\n");
-	res = unwind_frame (context, m, m->eh_frame,
-			    m->eh_frame_len, 1, user, compat_task,
-			    kunw_mod);
+	res = __unwind_frame(context, mod, compat_task);
 
 	dbug_unwind (2, "unwind_frame returned: %d\n", res);
 	return res;
-}
-
-
-unsigned long get_pc(struct unwind_frame_info *info)
-{
-	return UNW_PC(info) - info->call_frame;
 }
 
 int unwind_full(struct unwind_context *context,
@@ -1738,7 +1714,7 @@ int unwind_full(struct unwind_context *context,
 		bt->entries[bt->nr_entries++] = pc;
 		dbug_unwind(1, "nr_entries %u, ip %p\n", bt->nr_entries, (void *) pc);
 
-		ret = unwind(context, 1, proc);
+		ret = unwind_frame(context, 1, proc);
 
 		if (ret != 0)
 			break;
