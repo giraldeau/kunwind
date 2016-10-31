@@ -14,10 +14,8 @@ struct kunwind_proc_modules {
 struct kunwind_stp_module {
 	struct _stp_module stp_mod;
 	struct list_head list;
-	void *base;
-	struct vm_area_struct *vma;
-	unsigned long vma_start;
-	unsigned long vma_end;
+	struct vm_area_struct *uvma;	/* ELF userspace vma */
+	void *kvmap;			/* ELF vmap in kernel */
 	struct page **pages;
 	int npages;
 };

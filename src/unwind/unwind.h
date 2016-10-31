@@ -49,14 +49,25 @@ static inline int _stp_is_compat_task(void)
 
 #endif /* CONFIG_COMPAT */
 
+struct section {
+	unsigned long offset;	/* offset from vma start */
+	u8 __user *ubuf;	/* original virtual address of the section */
+	u8 *kbuf;		/* accessible buffer mapped in kernel */
+	uint32_t size;		/* buffer size in bytes */
+};
+
 struct _stp_module {
+	/* FIXME: remove these bogus fields and print path using %pD */
 	const char* name; /* module name (kernel) or /canonical/path for userspace*/
 	char* path; /* canonical filesystem path (kernel .ko or user) */
-	char* buf; /* buffer for the path (it can start after the
+	char* path_buf; /* buffer for the path (it can start after the
 		    * beginning */
 
 	int is_dynamic;
 	unsigned long static_addr;
+
+	struct section ehf_hdr;	/* eh_frame_hdr */
+	struct section ehf;	/* eh_frame */
 
 	// The .eh_frame unwind data for this module.
 	void *eh_frame;

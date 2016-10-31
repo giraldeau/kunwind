@@ -186,9 +186,9 @@ stap_find_vma_map_info_user(struct task_struct *tsk, void *user,
 	if (!kunw_mod)
 		return -ESRCH;
 	if (vm_start)
-		*vm_start = kunw_mod->vma_start;
+		*vm_start = kunw_mod->uvma->vm_start;
 	if (vm_end)
-		*vm_end = kunw_mod->vma_end;
+		*vm_end = kunw_mod->uvma->vm_end;
 	// TODO fill or remove remove other fields?
 	return 0;
 }
@@ -198,7 +198,7 @@ static struct kunwind_stp_module
 {
 	struct kunwind_stp_module *kunw_mod = NULL, *pos;
 	list_for_each_entry(pos, &(proc->stp_modules), list) {
-		if (pc >= pos->vma_start && pc <= pos->vma_end) {
+		if (pc >= pos->uvma->vm_start && pc <= pos->uvma->vm_end) {
 			kunw_mod = pos;
 			break;
 		}
