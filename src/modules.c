@@ -27,8 +27,8 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 	hdr_addr = mod->stp_mod.unwind_hdr_addr;
 	hdr_len = mod->stp_mod.unwind_hdr_len;
 
-	err =  eh_frame_from_hdr(mod->kvmap, mod->uvma->vm_start,
-				 mod->uvma->vm_end, proc->compat,
+	err =  eh_frame_from_hdr(mod->kvmap, mod->elf_vma->vm_start,
+				 mod->elf_vma->vm_end, proc->compat,
 				 hdr, hdr_addr, hdr_len,
 				 &eh, &eh_addr, &eh_len);
 
@@ -47,7 +47,7 @@ int fill_mod_path(struct kunwind_stp_module *mod)
 	char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
-	path = vma_file_path(mod->uvma, buf, LINFO_PATHLEN);
+	path = vma_file_path(mod->elf_vma, buf, LINFO_PATHLEN);
 	if (path) {
 		kfree(mod->stp_mod.path_buf);
 		mod->stp_mod.path_buf = buf;
@@ -77,17 +77,17 @@ static int init_kunwind_stp_module(struct task_struct *task,
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
-	mod->uvma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
+	mod->elf_vma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
 
 	// Get the vma pages
-	npages = vma_pages(mod->uvma);
+	npages = vma_pages(mod->elf_vma);
 	pages = kmalloc(sizeof(struct page *) * npages, GFP_KERNEL);
 	if (!pages) {
 		res = -ENOMEM;
 		goto FREEPATH;
 	}
 
-	res = __get_user_pages_unlocked(task, task->mm, mod->uvma->vm_start,
+	res = __get_user_pages_unlocked(task, task->mm, mod->elf_vma->vm_start,
 			npages, 0, 0, pages, FOLL_TOUCH);
 	if (res < 0) goto FREEPAGES;
 	npages = res;
@@ -95,19 +95,19 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	// Vmap the pages so that we can access eh_frame directly.  We
 	// map the full vma because it was easier to write, but we
 	// should only vmap the pages containing unwinding info. TODO
-	mod->kvmap = vmap(pages, npages, mod->uvma->vm_flags, mod->uvma->vm_page_prot);
+	mod->kvmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
 	dbug_unwind(1, "vmap kernel addr: %p\n", mod->kvmap);
 
 	// bookkeeping info
 	mod->pages = pages;
 	mod->npages = npages;
 	// eh_frame_hdr info
-	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->uvma->vm_start;
+	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
 	mod->stp_mod.unwind_hdr = mod->kvmap + mod->stp_mod.unwind_hdr_addr;
 	//  dynamic/absolute
 	mod->stp_mod.is_dynamic = linfo->dynamic;
-	mod->stp_mod.static_addr = mod->uvma->vm_start;
+	mod->stp_mod.static_addr = mod->elf_vma->vm_start;
 
 	// eh_frame info
 	if (!linfo->eh_frame_addr || !linfo->eh_frame_size) {
@@ -116,7 +116,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		if (res)
 			goto FREEPAGES;
 	} else {
-		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->uvma->vm_start;
+		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->elf_vma->vm_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
 		mod->stp_mod.eh_frame = mod->kvmap + mod->stp_mod.eh_frame_addr;
 	}
@@ -147,7 +147,7 @@ FREEPAGES:
 FREEPATH:
 	kfree(path);
 	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
-	dbug_unwind(1, "Failed to load module at virtual address %lx\n", mod->uvma->vm_start);
+	dbug_unwind(1, "Failed to load module at virtual address %lx\n", mod->elf_vma->vm_start);
 	return res;
 }
 
