@@ -66,6 +66,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		struct kunwind_stp_module *mod,
 		struct kunwind_proc_modules *proc)
 {
+	int i;
 	int res;
 	unsigned long npages;
 	struct page **pages;
@@ -97,9 +98,10 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		goto out_free_pages;
 	npages = res;
 
-	// Vmap the pages so that we can access eh_frame directly.  We
-	// map the full vma because it was easier to write, but we
-	// should only vmap the pages containing unwinding info. TODO
+	/*
+	 * vmap the pages containing the eh_frame for direct
+	 * access without copy_from_user.
+	 */
 	mod->elf_vmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
 	dbug_unwind(1, "vmap kernel addr: %p\n", mod->elf_vmap);
 
@@ -122,7 +124,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		res = fill_eh_frame_info(mod, proc);
 		dbug_unwind(1, "fill_eh_frame_info %d\n", res);
 		if (res)
-			goto out_put_pages;
+			goto out_vunmap;
 	} else {
 		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->elf_vma->vm_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
@@ -134,14 +136,14 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
 		if (!path) {
 			res = -ENOMEM;
-			goto out_put_pages;
+			goto out_vunmap;
 		}
 		strncpy(path, linfo->path, LINFO_PATHLEN);
 		mod->stp_mod.path_buf = mod->stp_mod.path = path;
 	} else {
 		res = fill_mod_path(mod);
 		if (res)
-			goto out_put_pages;
+			goto out_vunmap;
 	}
 
 	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
@@ -159,8 +161,12 @@ static int init_kunwind_stp_module(struct task_struct *task,
 out_free_path:
 	kfree(path);
 	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
+out_vunmap:
+	vunmap(mod->elf_vmap);
 out_put_pages:
-	// TODO
+	for (i = 0; i < npages; ++i) {
+		put_page(pages[i]);
+	}
 out_free_pages:
 	kfree(pages);
 out:
