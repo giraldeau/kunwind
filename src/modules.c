@@ -42,22 +42,6 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 	return 0;
 }
 
-int fill_mod_path(struct kunwind_stp_module *mod)
-{
-	char *path, *buf = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-	if (!buf)
-		return -ENOMEM;
-	path = vma_file_path(mod->elf_vma, buf, LINFO_PATHLEN);
-	if (path) {
-		kfree(mod->stp_mod.path_buf);
-		mod->stp_mod.path_buf = buf;
-		mod->stp_mod.path = path;
-	} else {
-		kfree(buf);
-	}
-	return 0;
-}
-
 /*
  * linfo must at least have eh_frame_hdr_addr and eh_frame_hdr_len
  */
@@ -71,10 +55,8 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	unsigned long npages;
 	struct page **pages;
 	unsigned long test;
-	char *path = 0;
 
 	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
-	mod->stp_mod.name = ""; // TODO fill if necessary or remove
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
@@ -131,36 +113,18 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		mod->stp_mod.eh_frame = mod->elf_vmap + mod->stp_mod.eh_frame_addr;
 	}
 
-	// Module path
-	if (strnlen(linfo->path, LINFO_PATHLEN)) {
-		path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-		if (!path) {
-			res = -ENOMEM;
-			goto out_vunmap;
-		}
-		strncpy(path, linfo->path, LINFO_PATHLEN);
-		mod->stp_mod.path_buf = mod->stp_mod.path = path;
-	} else {
-		res = fill_mod_path(mod);
-		if (res)
-			goto out_vunmap;
-	}
-
-	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
+	dbug_unwind(1, "Loaded module from %pD1\n", mod->elf_vma->vm_file);
 
 	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
 	if (res < 0)
-		goto out_free_path;
+		goto out_vunmap;
 	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr)) {
 		WARN_ON_ONCE("Bad eh_frame virtual kernel address.");
-		goto out_free_path;
+		goto out_vunmap;
 	}
 	return 0;
 
 
-out_free_path:
-	kfree(path);
-	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
 out_vunmap:
 	vunmap(mod->elf_vmap);
 out_put_pages:
@@ -178,8 +142,6 @@ static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
 	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->elf_vmap);
-	kfree(mod->stp_mod.path_buf);
-	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
 	vunmap(mod->elf_vmap);
 	mod->elf_vmap = NULL;
 	for (i = 0; i < mod->npages; ++i) {

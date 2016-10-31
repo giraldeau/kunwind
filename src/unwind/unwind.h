@@ -57,12 +57,6 @@ struct section {
 };
 
 struct _stp_module {
-	/* FIXME: remove these bogus fields and print path using %pD */
-	const char* name; /* module name (kernel) or /canonical/path for userspace*/
-	char* path; /* canonical filesystem path (kernel .ko or user) */
-	char* path_buf; /* buffer for the path (it can start after the
-		    * beginning */
-
 	int is_dynamic;
 	unsigned long static_addr;
 
