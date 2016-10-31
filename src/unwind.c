@@ -949,7 +949,7 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 	unsigned long startLoc;
 	u32 *fde = NULL;
 	unsigned num, tableSize;
-	unsigned long eh_hdr_addr = m->unwind_hdr_addr;
+	unsigned long eh_hdr_addr = m->unwind_hdr_off;
 
 	if (hdr == NULL || hdr_len < 4 || hdr[0] != 1) {
 		_stp_warn("no or bad debug frame hdr\n");
@@ -1773,17 +1773,17 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 		      u8 *hdr, unsigned long hdr_addr, unsigned long hdr_len,
 		      u8 **eh_frame, unsigned long *eh_frame_addr, unsigned long *eh_frame_len)
 {
-	unsigned long eh_addr, eh_len, cie_fde_size = 0;
+	unsigned long eh_addr, eh_off, eh_len, cie_fde_size = 0;
 	const u8* pos;
 	u8 *eh, *ptr, *prev_ptr;
 
 	// FIXME -1 tablesize might not be right in following call
 	pos = hdr + 4;
-	eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], vma_start,
-				hdr_addr, 1, compat, -1);
-	if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
-		eh_addr = eh_addr - (unsigned long)hdr + hdr_addr;
-	eh = (void *)(eh_addr + base);
+	eh_addr = read_ptr_sect(&pos, hdr + hdr_len, hdr[1], vma_start, hdr_addr, 1, compat, -1);
+	eh_off = eh_addr - (unsigned long)base;
+	eh = (u8 *) eh_addr;
+	dbug_unwind(3, "eh: 0x%lx\n", (unsigned long)eh);
+	dbug_unwind(3, "offset: 0x%lx\n", eh_off);
 
 	// Find eh_frame size
 	ptr = prev_ptr = eh;
@@ -1804,7 +1804,7 @@ int eh_frame_from_hdr(void *base, unsigned long vma_start, unsigned long vma_end
 	} while (cie_fde_size);
 
 	*eh_frame = eh;
-	*eh_frame_addr = eh_addr;
+	*eh_frame_addr = eh_off;
 	*eh_frame_len = eh_len;
 	return 0;
 }

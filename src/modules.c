@@ -24,7 +24,7 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 
 	// Use the .eh_frame_hdr pointer to find the .eh_frame section
 	hdr = mod->stp_mod.unwind_hdr;
-	hdr_addr = mod->stp_mod.unwind_hdr_addr;
+	hdr_addr = mod->stp_mod.unwind_hdr_off;
 	hdr_len = mod->stp_mod.unwind_hdr_len;
 
 	err =  eh_frame_from_hdr(mod->elf_vmap, mod->elf_vma->vm_start,
@@ -93,11 +93,10 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->pages = pages;
 	mod->npages = npages;
 
-	// eh_frame_hdr info
-	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
+	/* eh_frame_hdr info */
+	mod->stp_mod.unwind_hdr_off = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
-	mod->stp_mod.unwind_hdr = mod->elf_vmap + mod->stp_mod.unwind_hdr_addr;
-	//  dynamic/absolute
+	mod->stp_mod.unwind_hdr = mod->elf_vmap + mod->stp_mod.unwind_hdr_off;
 	mod->stp_mod.is_dynamic = linfo->dynamic;
 	mod->stp_mod.static_addr = mod->elf_vma->vm_start;
 
