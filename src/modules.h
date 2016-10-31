@@ -16,7 +16,7 @@ struct kunwind_stp_module {
 	struct list_head list;
 	struct vm_area_struct *elf_vma;	/* ELF userspace vma */
 	void *elf_vmap;			/* ELF vmap in kernel */
-	struct page **pages;
+	struct page **pages;		/* ELF pages for kernel vmap */
 	int npages;
 };
 

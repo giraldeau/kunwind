@@ -84,12 +84,17 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	pages = kmalloc(sizeof(struct page *) * npages, GFP_KERNEL);
 	if (!pages) {
 		res = -ENOMEM;
-		goto FREEPATH;
+		goto out;
 	}
 
+	/*
+	 * FIXME: add missing put_page() and check pinned size
+	 * See example: drivers/infiniband/hw/hfi1/user_pages.c
+	 */
 	res = __get_user_pages_unlocked(task, task->mm, mod->elf_vma->vm_start,
 			npages, 0, 0, pages, FOLL_TOUCH);
-	if (res < 0) goto FREEPAGES;
+	if (res < 0)
+		goto out_free_pages;
 	npages = res;
 
 	// Vmap the pages so that we can access eh_frame directly.  We
@@ -98,9 +103,12 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->elf_vmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
 	dbug_unwind(1, "vmap kernel addr: %p\n", mod->elf_vmap);
 
-	// bookkeeping info
+	if (!mod->elf_vmap)
+		goto out_put_pages;
+
 	mod->pages = pages;
 	mod->npages = npages;
+
 	// eh_frame_hdr info
 	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
@@ -114,7 +122,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		res = fill_eh_frame_info(mod, proc);
 		dbug_unwind(1, "fill_eh_frame_info %d\n", res);
 		if (res)
-			goto FREEPAGES;
+			goto out_put_pages;
 	} else {
 		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->elf_vma->vm_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
@@ -124,29 +132,38 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	// Module path
 	if (strnlen(linfo->path, LINFO_PATHLEN)) {
 		path = kmalloc(LINFO_PATHLEN, GFP_KERNEL);
-		if (!path)
-			return -ENOMEM;
+		if (!path) {
+			res = -ENOMEM;
+			goto out_put_pages;
+		}
 		strncpy(path, linfo->path, LINFO_PATHLEN);
 		mod->stp_mod.path_buf = mod->stp_mod.path = path;
 	} else {
 		res = fill_mod_path(mod);
 		if (res)
-			return res;
+			goto out_put_pages;
 	}
 
 	dbug_unwind(1, "Loaded module from %s\n", mod->stp_mod.path);
 
 	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
-	if (res < 0) goto FREEPAGES;
-	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr))
-		KUNWIND_BUGM("Bad eh_frame virtual kernel address.");
-
+	if (res < 0)
+		goto out_free_path;
+	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr)) {
+		WARN_ON_ONCE("Bad eh_frame virtual kernel address.");
+		goto out_free_path;
+	}
 	return 0;
-FREEPAGES:
-	kfree(pages);
-FREEPATH:
+
+
+out_free_path:
 	kfree(path);
 	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
+out_put_pages:
+	// TODO
+out_free_pages:
+	kfree(pages);
+out:
 	dbug_unwind(1, "Failed to load module at virtual address %lx\n", mod->elf_vma->vm_start);
 	return res;
 }
