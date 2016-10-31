@@ -27,7 +27,7 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 	hdr_addr = mod->stp_mod.unwind_hdr_addr;
 	hdr_len = mod->stp_mod.unwind_hdr_len;
 
-	err =  eh_frame_from_hdr(mod->kvmap, mod->elf_vma->vm_start,
+	err =  eh_frame_from_hdr(mod->elf_vmap, mod->elf_vma->vm_start,
 				 mod->elf_vma->vm_end, proc->compat,
 				 hdr, hdr_addr, hdr_len,
 				 &eh, &eh_addr, &eh_len);
@@ -95,8 +95,8 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	// Vmap the pages so that we can access eh_frame directly.  We
 	// map the full vma because it was easier to write, but we
 	// should only vmap the pages containing unwinding info. TODO
-	mod->kvmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
-	dbug_unwind(1, "vmap kernel addr: %p\n", mod->kvmap);
+	mod->elf_vmap = vmap(pages, npages, mod->elf_vma->vm_flags, mod->elf_vma->vm_page_prot);
+	dbug_unwind(1, "vmap kernel addr: %p\n", mod->elf_vmap);
 
 	// bookkeeping info
 	mod->pages = pages;
@@ -104,7 +104,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	// eh_frame_hdr info
 	mod->stp_mod.unwind_hdr_addr = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
 	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
-	mod->stp_mod.unwind_hdr = mod->kvmap + mod->stp_mod.unwind_hdr_addr;
+	mod->stp_mod.unwind_hdr = mod->elf_vmap + mod->stp_mod.unwind_hdr_addr;
 	//  dynamic/absolute
 	mod->stp_mod.is_dynamic = linfo->dynamic;
 	mod->stp_mod.static_addr = mod->elf_vma->vm_start;
@@ -118,7 +118,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	} else {
 		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->elf_vma->vm_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
-		mod->stp_mod.eh_frame = mod->kvmap + mod->stp_mod.eh_frame_addr;
+		mod->stp_mod.eh_frame = mod->elf_vmap + mod->stp_mod.eh_frame_addr;
 	}
 
 	// Module path
@@ -154,11 +154,11 @@ FREEPATH:
 static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
 {
 	int i;
-	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->kvmap);
+	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->elf_vmap);
 	kfree(mod->stp_mod.path_buf);
 	mod->stp_mod.path_buf = mod->stp_mod.path = NULL;
-	vunmap(mod->kvmap);
-	mod->kvmap = NULL;
+	vunmap(mod->elf_vmap);
+	mod->elf_vmap = NULL;
 	for (i = 0; i < mod->npages; ++i) {
 		put_page(mod->pages[i]);
 	}
