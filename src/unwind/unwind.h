@@ -64,12 +64,12 @@ struct _stp_module {
 	struct section ehf;	/* eh_frame */
 
 	// The .eh_frame unwind data for this module.
-	void *eh_frame;
-	void *unwind_hdr;
+	void *eh_frame_kbuf;
+	void *unwind_hdr_kbuf;
 	uint32_t eh_frame_len;
-	uint32_t unwind_hdr_len;
-	unsigned long eh_frame_addr; /* Orig load address (offset) .eh_frame */
-	unsigned long unwind_hdr_off; /* same for .eh_frame_hdr */
+	uint32_t unwind_hdr_size;
+	unsigned long eh_frame_offset; /* Orig load address (offset) .eh_frame */
+	unsigned long unwind_hdr_offset; /* same for .eh_frame_hdr */
 };
 
 /** Safely read from userspace or kernelspace.

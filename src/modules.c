@@ -23,9 +23,9 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 	int err;
 
 	// Use the .eh_frame_hdr pointer to find the .eh_frame section
-	hdr = mod->stp_mod.unwind_hdr;
-	hdr_addr = mod->stp_mod.unwind_hdr_off;
-	hdr_len = mod->stp_mod.unwind_hdr_len;
+	hdr = mod->stp_mod.unwind_hdr_kbuf;
+	hdr_addr = mod->stp_mod.unwind_hdr_offset;
+	hdr_len = mod->stp_mod.unwind_hdr_size;
 
 	err =  eh_frame_from_hdr(mod->elf_vmap, mod->elf_vma->vm_start,
 				 mod->elf_vma->vm_end, proc->compat,
@@ -35,9 +35,9 @@ int fill_eh_frame_info(struct kunwind_stp_module *mod,
 	if (err)
 		return err;
 
-	mod->stp_mod.eh_frame_addr = eh_addr;
+	mod->stp_mod.eh_frame_offset = eh_addr;
 	mod->stp_mod.eh_frame_len = eh_len;
-	mod->stp_mod.eh_frame = eh;
+	mod->stp_mod.eh_frame_kbuf = eh;
 
 	return 0;
 }
@@ -60,7 +60,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
-	mod->elf_vma = find_vma(task->mm, linfo->eh_frame_hdr_addr);
+	mod->elf_vma = find_vma(task->mm, linfo->eh_frame_hdr_offset);
 
 	// Get the vma pages
 	npages = vma_pages(mod->elf_vma);
@@ -94,9 +94,9 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->npages = npages;
 
 	/* eh_frame_hdr info */
-	mod->stp_mod.unwind_hdr_off = linfo->eh_frame_hdr_addr - mod->elf_vma->vm_start;
-	mod->stp_mod.unwind_hdr_len = linfo->eh_frame_hdr_size;
-	mod->stp_mod.unwind_hdr = mod->elf_vmap + mod->stp_mod.unwind_hdr_off;
+	mod->stp_mod.unwind_hdr_offset = linfo->eh_frame_hdr_offset - mod->elf_vma->vm_start;
+	mod->stp_mod.unwind_hdr_size = linfo->eh_frame_hdr_size;
+	mod->stp_mod.unwind_hdr_kbuf = mod->elf_vmap + mod->stp_mod.unwind_hdr_offset;
 	mod->stp_mod.is_dynamic = linfo->dynamic;
 	mod->stp_mod.static_addr = mod->elf_vma->vm_start;
 
@@ -107,17 +107,17 @@ static int init_kunwind_stp_module(struct task_struct *task,
 		if (res)
 			goto out_vunmap;
 	} else {
-		mod->stp_mod.eh_frame_addr = linfo->eh_frame_addr - mod->elf_vma->vm_start;
+		mod->stp_mod.eh_frame_offset = linfo->eh_frame_addr - mod->elf_vma->vm_start;
 		mod->stp_mod.eh_frame_len = linfo->eh_frame_size;
-		mod->stp_mod.eh_frame = mod->elf_vmap + mod->stp_mod.eh_frame_addr;
+		mod->stp_mod.eh_frame_kbuf = mod->elf_vmap + mod->stp_mod.eh_frame_offset;
 	}
 
 	dbug_unwind(1, "Loaded module from %pD1\n", mod->elf_vma->vm_file);
 
-	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_addr);
+	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_offset);
 	if (res < 0)
 		goto out_vunmap;
-	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr)) {
+	if (test != *((unsigned long *) mod->stp_mod.unwind_hdr_kbuf)) {
 		WARN_ON_ONCE("Bad eh_frame virtual kernel address.");
 		goto out_vunmap;
 	}
@@ -204,7 +204,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 
 	// Fill linfo
 	linfo.obj_addr = info->addr;
-	linfo.eh_frame_hdr_addr = info->addr + eh_phdr->p_vaddr;
+	linfo.eh_frame_hdr_offset = info->addr + eh_phdr->p_vaddr;
 	linfo.eh_frame_hdr_size = eh_phdr->p_memsz;
 	linfo.dynamic = dynamic;
 

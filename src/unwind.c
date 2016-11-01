@@ -915,10 +915,10 @@ adjustStartLoc (unsigned long startLoc,
 
   /* eh_frame data has been loaded in the kernel, so readjust offset. */
   if (is_ehframe) {
-    dbug_unwind(2, "eh_frame=%lx, eh_frame_addr=%lx\n", (unsigned long) m->eh_frame, m->eh_frame_addr);
+    dbug_unwind(2, "eh_frame=%lx, eh_frame_offset=%lx\n", (unsigned long) m->eh_frame_kbuf, m->eh_frame_offset);
     if ((ptrType & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel) {
-      startLoc -= (unsigned long) m->eh_frame;
-      startLoc += m->eh_frame_addr;
+      startLoc -= (unsigned long) m->eh_frame_kbuf;
+      startLoc += m->eh_frame_offset;
     }
     /* User space exec */
     if (!m->is_dynamic)
@@ -944,12 +944,12 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 			    int is_ehframe, int user, int compat_task,
 			    struct kunwind_stp_module *kunw_mod)
 {
-	const u8 *ptr, *end, *hdr = m->unwind_hdr;
-	uint32_t hdr_len = m->unwind_hdr_len;
+	const u8 *ptr, *end, *hdr = m->unwind_hdr_kbuf;
+	uint32_t hdr_len = m->unwind_hdr_size;
 	unsigned long startLoc;
 	u32 *fde = NULL;
 	unsigned num, tableSize;
-	unsigned long eh_hdr_addr = m->unwind_hdr_off;
+	unsigned long eh_hdr_addr = m->unwind_hdr_offset;
 
 	if (hdr == NULL || hdr_len < 4 || hdr[0] != 1) {
 		_stp_warn("no or bad debug frame hdr\n");
@@ -987,8 +987,8 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 						 eh_hdr_addr, user, compat_task, tableSize);
 		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
 			eh = eh - (unsigned long)hdr + eh_hdr_addr;
-		if ((is_ehframe && eh != (unsigned long)m->eh_frame_addr)) {
-			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_addr = 0x%lx", eh, (unsigned long)m->eh_frame_addr);
+		if ((is_ehframe && eh != (unsigned long)m->eh_frame_offset)) {
+			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_offset = 0x%lx", eh, (unsigned long)m->eh_frame_offset);
 			return NULL;
 		}
 	}
@@ -1026,9 +1026,9 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 		   new eh_frame load address. For our own debug_hdr created
 		   table the fde is an offset into the debug_frame table. */
 		if (is_ehframe)
-			fde = off - m->eh_frame_addr + m->eh_frame;
+			fde = off - m->eh_frame_offset + m->eh_frame_kbuf;
 		else
-			fde = m->eh_frame + off;
+			fde = m->eh_frame_kbuf + off;
 	}
 
 	dbug_unwind(1, "returning fde=%lx startLoc=%lx\n", (unsigned long) fde, startLoc);
@@ -1387,7 +1387,7 @@ __unwind_frame(struct unwind_context *context,
 	int ret;
 
 	m = &kunw_mod->stp_mod;
-	table = m->eh_frame;
+	table = m->eh_frame_kbuf;
 	table_len = m->eh_frame_len;
 
 	if (unlikely(table_len == 0)) {
@@ -1436,7 +1436,7 @@ __unwind_frame(struct unwind_context *context,
 			dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
 			goto done;
 		}
-	} else if (m->unwind_hdr == NULL) {
+	} else if (m->unwind_hdr_kbuf == NULL) {
 	    /* Only do a linear search if there isn't a search header.
 	       There always should be one, we create it in the translator
 	       if it didn't exist. These should never be missing except
