@@ -929,7 +929,7 @@ adjustStartLoc (unsigned long startLoc,
   if (user && m->is_dynamic)
 	  stap_find_vma_map_info_user(current->group_leader, m, &vm_addr, NULL, NULL, kunw_mod);
   else
-    vm_addr = m->static_addr;
+	  vm_addr = kunw_mod->elf_vma->vm_start;
 
   if (is_ehframe)
     return startLoc + vm_addr;

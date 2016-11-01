@@ -58,7 +58,6 @@ struct section {
 
 struct _stp_module {
 	int is_dynamic;
-	unsigned long static_addr;
 
 	struct section ehf_hdr;	/* eh_frame_hdr */
 	struct section ehf;	/* eh_frame */

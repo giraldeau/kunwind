@@ -98,7 +98,6 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->stp_mod.unwind_hdr_size = linfo->eh_frame_hdr_size;
 	mod->stp_mod.unwind_hdr_kbuf = mod->elf_vmap + mod->stp_mod.unwind_hdr_offset;
 	mod->stp_mod.is_dynamic = linfo->dynamic;
-	mod->stp_mod.static_addr = mod->elf_vma->vm_start;
 
 	// eh_frame info
 	if (!linfo->eh_frame_addr || !linfo->eh_frame_size) {
