@@ -15,6 +15,7 @@
 
 #include <linux/types.h>
 #include <linux/module.h>
+#include <linux/kallsyms.h>
 
 #include "modules.h"
 #include "debug.h"
@@ -1024,10 +1025,13 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 	return fde;
 }
 
+/*
+TODO refactoring
 static u32 *_stp_search_cie(void)
 {
 	return NULL;
 }
+*/
 
 #define FRAME_REG(r, t) (((t *)frame)[reg_info[r].offs])
 
@@ -1342,6 +1346,19 @@ struct ctx {
 };
 */
 
+static void (*show_regs_fn)(struct pt_regs *, int all) = NULL;
+void dump_context(struct unwind_context *ctx)
+{
+	struct unwind_frame_info *info = &ctx->info;
+	struct unwind_state *state = &ctx->state;
+	(void) state;
+
+	if (!show_regs_fn)
+		show_regs_fn = (void *) kallsyms_lookup_name("__show_regs");
+	if (show_regs_fn)
+		show_regs_fn(&info->regs, 0);
+}
+
 /*
  * Unwind to previous frame.  Returns 0 if successful, negative
  * number in case of an error.  A positive return means unwinding is finished;
@@ -1396,6 +1413,10 @@ __unwind_frame(struct unwind_context *context,
 	/* All "fake" dwarf registers should start out Nowhere. */
 	for (i = UNW_NR_REAL_REGS; i < ARRAY_SIZE(REG_STATE.regs); ++i)
 		set_no_state_rule(i, Nowhere, state);
+
+	/* DEBUG */
+	printk("UNWIND step 1\n");
+	dump_context(context);
 
 	fde = _stp_search_fde(pc, m, is_ehframe, user, compat_task, kunw_mod);
 	dbug_unwind(1, "file %pD1: fde=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) fde);
@@ -1467,6 +1488,10 @@ __unwind_frame(struct unwind_context *context,
 	if (REG_STATE.regs[retAddrReg].where == Nowhere)
 		goto bottom;
 
+	/* DEBUG */
+	printk("UNWIND step 2\n");
+	dump_context(context);
+
 	/* update frame */
 	if (REG_STATE.cfa_is_expr) {
 		if (compute_expr(REG_STATE.cfa_expr, frame, &cfa, user, compat_task))
@@ -1483,6 +1508,10 @@ __unwind_frame(struct unwind_context *context,
 			    REG_STATE.cfa.reg, REG_STATE.cfa.off);
 		cfa = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
 	}
+
+	/* DEBUG */
+	printk("UNWIND step 3\n");
+	dump_context(context);
 
 	/* Here, the CFA value is known */
 	frame_size = abs(cfa - UNW_SP(frame));
@@ -1616,6 +1645,11 @@ __unwind_frame(struct unwind_context *context,
 			break;
 		}
 	}
+
+	/* DEBUG */
+	printk("UNWIND step 4\n");
+	dump_context(context);
+
 	dbug_unwind(1, "returning 0 (%llx)\n",
 		    (unsigned long long) UNW_PC(frame));
 	return 0;
