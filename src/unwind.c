@@ -1346,18 +1346,99 @@ struct ctx {
 };
 */
 
+#ifdef DEBUG_UNWIND
+
+static char *where_names[] = {
+	"Same",     /* no state */
+	"Nowhere",  /* no state */
+	"Memory",   /* signed offset from CFA */
+	"Register", /* unsigned register number */
+	"Value",    /* signed offset from CFA */
+	"Expr",     /* DWARF expression */
+	"ValExpr"   /* DWARF expression */
+};
+
+void dump_expr(const u8 *expr)
+{
+	uleb128_t len = get_uleb128(&expr, (const u8 *) -1UL);
+	const u8 *const end = expr + len;
+	printk("cfa_expr ops (%ld):", len);
+	while (expr < end) {
+		const u8 op = *expr++;
+		printk(" %x", op);
+	}
+}
+
+void dump_unwind_regs(struct unwind_item *regs, int len)
+{
+	int i;
+
+	for (i = 0; i < len; i++) {
+		struct unwind_item *item = &regs[i];
+		printk("unwind_regs %d where=%s ", i, where_names[item->where]);
+		switch (item->where) {
+		case Same:
+		case Nowhere:
+			printk("no state");
+			break;
+		case Memory:
+			printk("state.off=%ld", item->state.off);
+			break;
+		case Register:
+			printk("state.reg=%ld", item->state.reg);
+			break;
+		case Value:
+			printk("cfa + state.off=%ld", item->state.off);
+			break;
+		case Expr:
+		case ValExpr:
+			dump_expr(item->state.expr);
+			break;
+		default:
+			break;
+		}
+		printk("\n");
+	}
+}
+
 static void (*show_regs_fn)(struct pt_regs *, int all) = NULL;
 void dump_context(struct unwind_context *ctx)
 {
 	struct unwind_frame_info *info = &ctx->info;
 	struct unwind_state *state = &ctx->state;
-	(void) state;
+	int i;
 
 	if (!show_regs_fn)
 		show_regs_fn = (void *) kallsyms_lookup_name("__show_regs");
 	if (show_regs_fn)
 		show_regs_fn(&info->regs, 0);
+
+	printk("unwind_state loc=%lx codeAlign=%lx dataAlign=%lx stackDepth=%x\n",
+			state->loc, state->codeAlign, state->dataAlign, state->stackDepth);
+
+	for (i = 0; i <= state->stackDepth; i++) {
+		struct unwind_reg_state *rs = &state->reg[i];
+
+		//rs->regs[x].where;
+		//rs->regs[x].state.expr;
+
+		printk("reg_state %d: cfa_is_expr=%d\n", i, rs->cfa_is_expr);
+		if (rs->cfa_is_expr) {
+			dump_expr(rs->cfa_expr);
+			printk("\n");
+		} else {
+			printk("cfa reg=%ld, off=%lx\n", rs->cfa.reg, rs->cfa.off);
+		}
+		dump_unwind_regs(rs->regs, ARRAY_SIZE(reg_info));
+	}
 }
+#else
+void dump_context(struct unwind_context *ctx)
+{
+	return;
+}
+#endif
+
 
 /*
  * Unwind to previous frame.  Returns 0 if successful, negative
