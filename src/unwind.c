@@ -21,6 +21,22 @@
 #include "debug.h"
 #include "unwind/unwind.h"
 
+#define PTREGS_INFO(f) #f
+static const char *regs_name[] = {
+	UNW_REGISTER_INFO
+};
+#undef PTREGS_INFO
+
+static char *where_name[] = {
+	"Same",     /* no state */
+	"Nowhere",  /* no state */
+	"Memory",   /* signed offset from CFA */
+	"Register", /* unsigned register number */
+	"Value",    /* signed offset from CFA */
+	"Expr",     /* DWARF expression */
+	"ValExpr"   /* DWARF expression */
+};
+
 static uleb128_t get_uleb128(const u8 **pcur, const u8 *end)
 {
 	const u8 *cur = *pcur;
@@ -232,12 +248,14 @@ static int check_fde(const u32 *fde, void *table, uint32_t table_len,
 }
 
 /* given an FDE, find its CIE and sanity check */
-static const u32 *cie_for_fde(const u32 *fde, void *unwind_data,
-			      uint32_t table_len, int is_ehframe)
+static const u32 *cie_for_fde(const u32 *fde, struct section *ehf, int is_ehframe)
 {
 	const u32 *cie;
 	unsigned version;
 	const u8 *end;
+
+	void *unwind_data = ehf->kbuf;
+	uint32_t table_len = ehf->size;
 
 	/* CIE_pointer must be a proper offset */
 	if ((fde[1] & (sizeof(*fde) - 1)) || fde[1] > (unsigned long)(fde + 1) - (unsigned long)unwind_data) {
@@ -289,7 +307,6 @@ static const u32 *cie_for_fde(const u32 *fde, void *unwind_data,
    been done start/end/version/id (done by is_fde and cie_for_fde).
    Returns -1 if FDE or CIE cannot be parsed.*/
 static int parse_fde_cie(const u32 *fde, const u32 *cie,
-			 void *unwind_data, uint32_t table_len,
 			 unsigned *ptrType, int user,
 			 unsigned long *startLoc, unsigned long *locRange,
 			 const u8 **fdeStart, const u8 **fdeEnd,
@@ -423,7 +440,8 @@ static int advance_loc(unsigned long delta, struct unwind_state *state)
 static void set_no_state_rule(uleb128_t reg, enum item_location where,
                               struct unwind_state *state)
 {
-	dbug_unwind(1, "reg=%lx, where=%d\n", reg, where);
+	dbug_unwind(1, "reg=%lx, (%s) where=%d (%s)\n", reg, regs_name[reg],
+			where, where_name[where]);
 	if (reg < ARRAY_SIZE(REG_STATE.regs)) {
 		REG_STATE.regs[reg].where = where;
 	}
@@ -433,7 +451,8 @@ static void set_no_state_rule(uleb128_t reg, enum item_location where,
 static void set_offset_rule(uleb128_t reg, enum item_location where,
                             sleb128_t svalue, struct unwind_state *state)
 {
-	dbug_unwind(1, "reg=%lx, where=%d, svalue=%lx\n", reg, where, svalue);
+	dbug_unwind(1, "reg=%lx (%s), where=%d (%s), svalue=%lx\n", reg,
+			regs_name[reg], where, where_name[where], svalue);
 	if (reg < ARRAY_SIZE(REG_STATE.regs)) {
 		REG_STATE.regs[reg].where = where;
 		REG_STATE.regs[reg].state.off = svalue;
@@ -444,7 +463,8 @@ static void set_offset_rule(uleb128_t reg, enum item_location where,
 static void set_register_rule(uleb128_t reg, uleb128_t value,
                               struct unwind_state *state)
 {
-	dbug_unwind(1, "reg=%lx, value=%lx\n", reg, value);
+	dbug_unwind(1, "reg=%lx (%s), where=%d (%s) value=%lx\n", reg,
+			regs_name[reg], Register, where_name[Register], value);
 	if (reg < ARRAY_SIZE(REG_STATE.regs)) {
 		REG_STATE.regs[reg].where = Register;
 		REG_STATE.regs[reg].state.reg = value;
@@ -458,8 +478,8 @@ static void set_expr_rule(uleb128_t reg, enum item_location where,
 {
 	const u8 *const start = *expr;
 	uleb128_t len = get_uleb128(expr, end);
-	dbug_unwind(1, "reg=%lx, where=%d, expr=%lu@%p\n",
-		    reg, where, len, *expr);
+	dbug_unwind(1, "reg=%lx (%s), where=%d (%s), expr=%lu@%p\n",
+		    reg, regs_name[reg], where, where_name[where], len, *expr);
 	/* Sanity check that expr falls completely inside known data. */
 	if (end - *expr >= len && reg < ARRAY_SIZE(REG_STATE.regs)) {
 		REG_STATE.regs[reg].where = where;
@@ -695,7 +715,7 @@ static int run_cfi_program(const u8 *start, const u8 *end, unsigned long targetL
 					dbug_unwind(1, "map DW_CFA_def_cfa value %ld to reg_info idx %ld\n",
 						    value, DWARF_REG_MAP(value));
 					REG_STATE.cfa.reg = value;
-					dbug_unwind(1, "DW_CFA_def_cfa reg=%ld\n", REG_STATE.cfa.reg);
+					dbug_unwind(1, "DW_CFA_def_cfa reg=%ld (%s)\n", REG_STATE.cfa.reg, regs_name[value]);
 				}
 				/*nobreak */
 			case DW_CFA_def_cfa_offset:
@@ -925,7 +945,7 @@ out:
 /* If we previously created an unwind header, then use it now to binary search */
 /* for the FDE corresponding to pc. */
 static u32 *_stp_search_fde(unsigned long pc, int is_ehframe, int user,
-		int compat_task, struct kunwind_module *kunw_mod)
+			    int compat_task, struct kunwind_module *kunw_mod)
 {
 	const u8 *ptr, *end, *hdr = kunw_mod->ehf_hdr.kbuf;
 	uint32_t hdr_len = kunw_mod->ehf_hdr.size;
@@ -1349,16 +1369,6 @@ struct ctx {
 
 #ifdef DEBUG_UNWIND
 
-static char *where_names[] = {
-	"Same",     /* no state */
-	"Nowhere",  /* no state */
-	"Memory",   /* signed offset from CFA */
-	"Register", /* unsigned register number */
-	"Value",    /* signed offset from CFA */
-	"Expr",     /* DWARF expression */
-	"ValExpr"   /* DWARF expression */
-};
-
 void dump_expr(const u8 *expr)
 {
 	uleb128_t len = get_uleb128(&expr, (const u8 *) -1UL);
@@ -1376,7 +1386,7 @@ void dump_unwind_regs(struct unwind_item *regs, int len)
 
 	for (i = 0; i < len; i++) {
 		struct unwind_item *item = &regs[i];
-		printk("unwind_regs %d where=%s ", i, where_names[item->where]);
+		printk("unwind_regs %d where=%s ", i, where_name[item->where]);
 		switch (item->where) {
 		case Same:
 		case Nowhere:
@@ -1440,6 +1450,46 @@ void dump_context(struct unwind_context *ctx)
 }
 #endif
 
+static int check_standard_frame(struct unwind_state *state,
+		struct unwind_frame_info *frame, int retAddrReg)
+{
+	int res;
+	unsigned long cfa;
+	int rip_where;
+	sleb128_t rip_off;
+	struct unwind_reg_state *rs = &REG_STATE;
+
+	cfa = FRAME_REG(rs->cfa.reg, unsigned long) + rs->cfa.off;
+	rip_where = REG_STATE.regs[UNW_PC_IDX].where;
+	rip_off = REG_STATE.regs[UNW_PC_IDX].state.off;
+	dbug_unwind(3, "cfa_is_expr=%d cfa.reg=%lu (%s) cfa.off=%ld "
+		       "cfa-8=%lx where_is_rip=%s rip_off=%ld rip_save_address=0x%lx\n",
+			rs->cfa_is_expr, rs->cfa.reg, regs_name[rs->cfa.reg],
+			rs->cfa.off, cfa - 8, where_name[rip_where],
+			rip_off, cfa + rip_off);
+
+	dbug_unwind(3, "rsp_where=%s rbp_where=%s\n",
+			where_name[REG_STATE.regs[RSP].where],
+			where_name[REG_STATE.regs[RBP].where]);
+
+	// FIXME: should we use COMPAT_REG_MAP here?
+	res = (!rs->cfa_is_expr
+		&& (rs->cfa.reg == RBP || rs->cfa.reg == RSP)
+		&& REG_STATE.regs[UNW_PC_IDX].where == Memory
+		&& REG_STATE.regs[UNW_PC_IDX].state.off == -8
+		&& (REG_STATE.regs[RSP].where == Nowhere
+			|| REG_STATE.regs[RSP].where == Same
+			|| REG_STATE.regs[RSP].where == Memory)
+		&& (REG_STATE.regs[RBP].where == Nowhere
+			|| REG_STATE.regs[RBP].where == Same
+			|| REG_STATE.regs[RBP].where == Memory)
+	);
+
+	dbug_unwind(3, "is_standard_frame=%d\n", res);
+
+	return res;
+}
+
 
 /*
  * Unwind to previous frame.  Returns 0 if successful, negative
@@ -1451,7 +1501,6 @@ __unwind_frame(struct unwind_context *context,
 	       struct kunwind_module *kunw_mod,
 	       int compat_task)
 {
-	void *table;
 	uint32_t table_size;
 	const int user = 1;
 	const int is_ehframe = 1;
@@ -1472,16 +1521,15 @@ __unwind_frame(struct unwind_context *context,
 	unsigned long frame_size;
 	int ret;
 
-	table = kunw_mod->ehf.kbuf;
-	table_size = kunw_mod->ehf.size;
+	struct section *ehf = &kunw_mod->ehf;
 
-	if (unlikely(table_size == 0)) {
+	if (unlikely(ehf->size == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
 		// might actually not be there.
 		dbug_unwind(1, "file %pD1: no unwind frame data\n", kunw_mod->elf_vma->vm_file);
 		goto err;
 	}
-	if (unlikely(table_size & (sizeof(*fde) - 1))) {
+	if (unlikely(ehf->size & (sizeof(*fde) - 1))) {
 		_stp_warn("file %pD1: frame_len=%d", kunw_mod->elf_vma->vm_file, table_size);
 		goto err;
 	}
@@ -1494,7 +1542,7 @@ __unwind_frame(struct unwind_context *context,
 		set_no_state_rule(i, Nowhere, state);
 
 	/* DEBUG */
-	printk("UNWIND step 1\n");
+	dbug_unwind(3, "UNWIND step 1\n");
 	dump_context(context);
 
 	fde = _stp_search_fde(pc, is_ehframe, user, compat_task, kunw_mod);
@@ -1502,18 +1550,17 @@ __unwind_frame(struct unwind_context *context,
 		_stp_warn("fde not found or invalid\n");
 		goto err;
 	}
-
 	dbug_unwind(1, "file %pD1: fde=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) fde);
-	/* found the fde, now set startLoc and endLoc */
 
-	cie = cie_for_fde(fde, table, table_size, is_ehframe);
+	/* found the fde, now set startLoc and endLoc */
+	cie = cie_for_fde(fde, ehf, is_ehframe);
 	dbug_unwind(1, "%pD1: cie=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) cie);
 	if (unlikely(cie == NULL)) {
 		_stp_warn("fde found in header, but cie is bad!\n");
 		goto err;
 	}
 
-	ret = parse_fde_cie(fde, cie, table, table_size, &ptrType, user,
+	ret = parse_fde_cie(fde, cie, &ptrType, user,
 			&startLoc, &locRange, &fdeStart, &fdeEnd,
 			&cieStart, &cieEnd, &state->codeAlign,
 			&state->dataAlign, &retAddrReg, &call_frame,
@@ -1522,6 +1569,7 @@ __unwind_frame(struct unwind_context *context,
 		_stp_warn("error: parse_fde_cie returned %d\n", ret);
 		goto err;
 	}
+
 	startLoc = adjust_start_loc(startLoc, ptrType, is_ehframe, user, kunw_mod);
 	if (!startLoc) {
 		_stp_warn("error: bad adjust_start_loc: %lx", startLoc);
@@ -1571,7 +1619,7 @@ __unwind_frame(struct unwind_context *context,
 		goto bottom;
 
 	/* DEBUG */
-	printk("UNWIND step 2\n");
+	dbug_unwind(3, "UNWIND step 2\n");
 	dump_context(context);
 
 	/* update frame */
@@ -1592,19 +1640,22 @@ __unwind_frame(struct unwind_context *context,
 	}
 
 	/* DEBUG */
-	printk("UNWIND step 3\n");
+	dbug_unwind(3, "UNWIND step 3\n");
 	dump_context(context);
+	check_standard_frame(state, frame, retAddrReg);
 
 	/* Here, the CFA value is known */
 	frame_size = abs(cfa - UNW_SP(frame));
 	dbug_unwind(1, "recovered cfa=%lx, rsp=%lx (frame size=%lu)\n", cfa, UNW_SP(frame), frame_size);
 
-	dbug_unwind(1, "check RSP invalid=%d UNW_RSP=%lu RSP=%llu where=%d\n",
+	dbug_unwind(1, "check RSP invalid=%d UNW_RSP=%lx RSP=%llx where=%d (%s)\n",
 			REG_INVALID(RSP),
 			UNW_SP(frame),
 			FRAME_REG(RSP, const u64),
-			REG_STATE.regs[RSP].where);
+			REG_STATE.regs[RSP].where,
+			where_name[REG_STATE.regs[RSP].where]);
 
+	dbug_unwind(1, "restore register from frame\n");
 	for (i = 0; i < ARRAY_SIZE(REG_STATE.regs); ++i) {
 		if (REG_INVALID(i)) {
 			if (REG_STATE.regs[i].where == Nowhere)
@@ -1612,10 +1663,7 @@ __unwind_frame(struct unwind_context *context,
 			_stp_warn("REG_INVALID %d\n", i);
 			goto err;
 		}
-		dbug_unwind(2, "register %d. where=%d\n", i, REG_STATE.regs[i].where);
 		switch (REG_STATE.regs[i].where) {
-		default:
-			break;
 		case Register:
 			if (REG_STATE.regs[i].state.reg >= ARRAY_SIZE(reg_info)
 			    || REG_INVALID(REG_STATE.regs[i].state.reg)
@@ -1623,6 +1671,13 @@ __unwind_frame(struct unwind_context *context,
 				_stp_warn("case Register bad\n");
 				goto err;
 			}
+			dbug_unwind(2, "restore register %d (%s) where=%d (%s) from frame register %lu (%s)\n",
+					i, regs_name[i],
+					REG_STATE.regs[i].where,
+					where_name[REG_STATE.regs[i].where],
+					REG_STATE.regs[i].state.reg,
+					regs_name[REG_STATE.regs[i].state.reg]);
+
 			switch (reg_info[REG_STATE.regs[i].state.reg].width) {
 #define CASE(n) \
 			case sizeof(u##n): \
@@ -1636,13 +1691,20 @@ __unwind_frame(struct unwind_context *context,
 				goto err;
 			}
 			break;
+		default:
+			break;
 		}
 	}
+
+	dbug_unwind(1, "restore frame\n");
 	for (i = 0; i < ARRAY_SIZE(REG_STATE.regs); ++i) {
-		dbug_unwind(2, "register %d. invalid=%d\n", i, REG_INVALID(i));
+		//dbug_unwind(2, "register %d. invalid=%d\n", i, REG_INVALID(i));
 		if (REG_INVALID(i))
 			continue;
-		dbug_unwind(2, "register %d. where=%d\n", i, REG_STATE.regs[i].where);
+		dbug_unwind(2, "restore frame register %d (%s) where=%d (%s)\n",
+				i, regs_name[i],
+				REG_STATE.regs[i].where,
+				where_name[REG_STATE.regs[i].where]);
 
 #if (UNW_SP_FROM_CFA == 1)
 		if (i == UNW_SP_IDX) {
@@ -1729,7 +1791,7 @@ __unwind_frame(struct unwind_context *context,
 	}
 
 	/* DEBUG */
-	printk("UNWIND step 4\n");
+	dbug_unwind(3, "UNWIND step 4\n");
 	dump_context(context);
 
 	dbug_unwind(1, "returning 0 (%llx)\n",
@@ -1754,32 +1816,13 @@ bottom:
 #undef FRAME_REG
 }
 
-//int is_standard_frame(struct unwind_reg_state *rs)
-//{
-//	return ((rs->regs[DWARF_CFA_REG_COLUMN].where == Register)
-//		&& (rs->regs[DWARF_CFA_REG_COLUMN].state.reg == RBP
-//			|| rs->regs[DWARF_CFA_REG_COLUMN].val == RSP)
-//		&& labs((long) rs->regs[DWARF_CFA_OFF_COLUMN].val) < (1 << 29)
-//		&& DWARF_GET_LOC(d->loc[d->ret_addr_column]) == d->cfa-8
-//		&& (rs->reg[RBP].where == DWARF_WHERE_UNDEF
-//			|| rs->reg[RBP].where == DWARF_WHERE_SAME
-//			|| (rs->reg[RBP].where == DWARF_WHERE_CFAREL
-//				&& labs((long) rs->reg[RBP].val) < (1 << 14)
-//				&& rs->reg[RBP].val+1 != 0))
-//		&& (rs->reg[RSP].where == DWARF_WHERE_UNDEF
-//			|| rs->reg[RSP].where == DWARF_WHERE_SAME
-//			|| (rs->reg[RSP].where == DWARF_WHERE_CFAREL
-//				&& labs((long) rs->reg[RSP].val) < (1 << 14)
-//				&& rs->reg[RSP].val+1 != 0)));
-//}
-
 int unwind_frame(struct unwind_context *context, int user,
 		 struct kunwind_proc_modules *proc)
 {
 	struct kunwind_module *mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
 	unsigned long pc = get_pc(frame);
-        int res;
+	int res;
 
 	/*
 	 * compat_task is a flag for 32bit process unwinding on a 64-bit
