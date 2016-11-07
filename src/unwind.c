@@ -1019,6 +1019,9 @@ static u32 *_stp_search_fde(unsigned long pc, int is_ehframe, int user,
 		else
 			fde = (u32 *) (kunw_mod->ehf.kbuf + off);
 	}
+	if (!check_fde(fde, kunw_mod->ehf.kbuf, kunw_mod->ehf.size, is_ehframe))
+		fde = NULL;
+
 	dbug_unwind(1, "returning fde=%p start_loc=%lx\n", fde, start_loc);
 	return fde;
 }
@@ -1495,18 +1498,19 @@ __unwind_frame(struct unwind_context *context,
 	dump_context(context);
 
 	fde = _stp_search_fde(pc, is_ehframe, user, compat_task, kunw_mod);
-
-	if (!fde || !check_fde(fde, table, table_size, is_ehframe)) {
-		_stp_warn("invalid fde=%lx\n", (unsigned long) fde);
+	if (!fde) {
+		_stp_warn("fde not found or invalid\n");
+		goto err;
 	}
 
 	dbug_unwind(1, "file %pD1: fde=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) fde);
 	/* found the fde, now set startLoc and endLoc */
+
 	cie = cie_for_fde(fde, table, table_size, is_ehframe);
 	dbug_unwind(1, "%pD1: cie=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) cie);
 	if (unlikely(cie == NULL)) {
 		_stp_warn("fde found in header, but cie is bad!\n");
-		fde = NULL;
+		goto err;
 	}
 
 	ret = parse_fde_cie(fde, cie, table, table_size, &ptrType, user,
