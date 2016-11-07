@@ -205,7 +205,7 @@ static int has_cie_id(const u32 *cie, int is_ehframe)
 }
 
 /* whether this is a real fde or not */
-static int is_fde(const u32 *fde, void *table, uint32_t table_len,
+static int check_fde(const u32 *fde, void *table, uint32_t table_len,
 			int is_ehframe)
 {
 	const u8 *end;
@@ -1020,7 +1020,6 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 		else
 			fde = (u32 *) (m->ehf.kbuf + off);
 	}
-
 	dbug_unwind(1, "returning fde=%p start_loc=%lx\n", fde, start_loc);
 	return fde;
 }
@@ -1453,7 +1452,7 @@ __unwind_frame(struct unwind_context *context,
 	struct _stp_module *m;
 
 	void *table;
-	uint32_t table_len;
+	uint32_t table_size;
 	const int user = 1;
 	const int is_ehframe = 1;
 
@@ -1475,16 +1474,16 @@ __unwind_frame(struct unwind_context *context,
 
 	m = &kunw_mod->stp_mod;
 	table = m->ehf.kbuf;
-	table_len = m->ehf.size;
+	table_size = m->ehf.size;
 
-	if (unlikely(table_len == 0)) {
+	if (unlikely(table_size == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
 		// might actually not be there.
 		dbug_unwind(1, "file %pD1: no unwind frame data\n", kunw_mod->elf_vma->vm_file);
 		goto err;
 	}
-	if (unlikely(table_len & (sizeof(*fde) - 1))) {
-		_stp_warn("file %pD1: frame_len=%d", kunw_mod->elf_vma->vm_file, table_len);
+	if (unlikely(table_size & (sizeof(*fde) - 1))) {
+		_stp_warn("file %pD1: frame_len=%d", kunw_mod->elf_vma->vm_file, table_size);
 		goto err;
 	}
 
@@ -1500,42 +1499,44 @@ __unwind_frame(struct unwind_context *context,
 	dump_context(context);
 
 	fde = _stp_search_fde(pc, m, is_ehframe, user, compat_task, kunw_mod);
+
+	if (!fde || !check_fde(fde, table, table_size, is_ehframe)) {
+		_stp_warn("invalid fde=%lx\n", (unsigned long) fde);
+	}
+
 	dbug_unwind(1, "file %pD1: fde=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) fde);
-
 	/* found the fde, now set startLoc and endLoc */
-	if (fde != NULL && is_fde(fde, table, table_len, is_ehframe)) {
-		cie = cie_for_fde(fde, table, table_len, is_ehframe);
-		dbug_unwind(1, "%pD1: cie=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) cie);
-		if (unlikely(cie == NULL)) {
-			_stp_warn("fde found in header, but cie is bad!\n");
-			fde = NULL;
-		}
+	cie = cie_for_fde(fde, table, table_size, is_ehframe);
+	dbug_unwind(1, "%pD1: cie=%lx\n", kunw_mod->elf_vma->vm_file, (unsigned long) cie);
+	if (unlikely(cie == NULL)) {
+		_stp_warn("fde found in header, but cie is bad!\n");
+		fde = NULL;
+	}
 
-		ret = parse_fde_cie(fde, cie, table, table_len, &ptrType, user,
-				&startLoc, &locRange, &fdeStart, &fdeEnd,
-				&cieStart, &cieEnd, &state->codeAlign,
-				&state->dataAlign, &retAddrReg, &call_frame,
-				compat_task);
-		if (ret < 0) {
-			_stp_warn("error: parse_fde_cie returned %d\n", ret);
-			goto err;
-		}
-		startLoc = adjust_start_loc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
-		if (!startLoc) {
-			_stp_warn("error: bad adjust_start_loc: %lx", startLoc);
-			goto err;
-		}
-		endLoc = startLoc + locRange;
-		dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
-		if (pc > endLoc) {
-			dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
-			goto done;
-		}
+	ret = parse_fde_cie(fde, cie, table, table_size, &ptrType, user,
+			&startLoc, &locRange, &fdeStart, &fdeEnd,
+			&cieStart, &cieEnd, &state->codeAlign,
+			&state->dataAlign, &retAddrReg, &call_frame,
+			compat_task);
+	if (ret < 0) {
+		_stp_warn("error: parse_fde_cie returned %d\n", ret);
+		goto err;
+	}
+	startLoc = adjust_start_loc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
+	if (!startLoc) {
+		_stp_warn("error: bad adjust_start_loc: %lx", startLoc);
+		goto err;
+	}
+	endLoc = startLoc + locRange;
+	dbug_unwind(1, "startLoc: %lx, endLoc: %lx\n", startLoc, endLoc);
+	if (pc > endLoc) {
+		dbug_unwind(1, "pc (%lx) > endLoc(%lx)\n", pc, endLoc);
+		goto done;
 	}
 
 	dbug_unwind(1, "cie=%lx fde=%lx startLoc=%lx endLoc=%lx, pc=%lx\n",
                     (unsigned long) cie, (unsigned long)fde, (unsigned long) startLoc, (unsigned long) endLoc, pc);
-	if (cie == NULL || fde == NULL)
+	if (cie == NULL)
 		goto err;
 
 	/* found the CIE and FDE */
