@@ -179,10 +179,10 @@ get_pc(struct unwind_frame_info *info)
 	return UNW_PC(info) - info->call_frame;
 }
 
-static struct kunwind_stp_module
+static struct kunwind_module
 *kunw_mod_lookup(unsigned long pc, struct kunwind_proc_modules *proc)
 {
-	struct kunwind_stp_module *kunw_mod = NULL, *pos;
+	struct kunwind_module *kunw_mod = NULL, *pos;
 	list_for_each_entry(pos, &(proc->stp_modules), list) {
 		if (pc >= pos->elf_vma->vm_start && pc <= pos->elf_vma->vm_end) {
 			kunw_mod = pos;
@@ -882,10 +882,9 @@ static char *_stp_eh_enc_name(signed type)
 // If this is an address inside a module, adjust for section relocation
 // and the elfutils base relocation done during loading of the .dwarf_frame
 // in translate.cxx.
-static unsigned long
-adjust_start_loc(unsigned long start_loc,
-		 struct _stp_module *m, unsigned ptr_type, int is_ehframe,
-		 int user, struct kunwind_stp_module *kunw_mod)
+static unsigned long adjust_start_loc(unsigned long start_loc,
+		unsigned ptr_type, int is_ehframe, int user,
+		struct kunwind_module *kunw_mod)
 {
 	unsigned long new_start_loc = start_loc;
 	unsigned long temp = start_loc;
@@ -894,7 +893,7 @@ adjust_start_loc(unsigned long start_loc,
 	 _stp_module_relocate and/or read_pointer. */
 	dbug_unwind(2, "adjust_start_loc parameters: start_loc=%lx ptr_type=%s file=%pD1 dynamic=%d is_ehframe=%d\n",
 			start_loc, _stp_eh_enc_name(ptr_type),
-			kunw_mod->elf_vma->vm_file, m->is_dynamic, is_ehframe);
+			kunw_mod->elf_vma->vm_file, kunw_mod->is_dynamic, is_ehframe);
 
 	if (start_loc == 0 || !is_ehframe) {
 		new_start_loc = 0;
@@ -906,14 +905,14 @@ adjust_start_loc(unsigned long start_loc,
 	 * Adjust the offset in the case start_loc is pcrel
 	 */
 	dbug_unwind(2, "eh_frame=%lx, eh_frame_offset=%lx\n",
-			(unsigned long) m->ehf.kbuf, m->ehf.offset);
+			(unsigned long) kunw_mod->ehf.kbuf, kunw_mod->ehf.offset);
 	if ((ptr_type & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel) {
-		temp = new_start_loc - (unsigned long) m->ehf.kbuf + m->ehf.offset;
+		temp = new_start_loc - (unsigned long) kunw_mod->ehf.kbuf + kunw_mod->ehf.offset;
 		dbug_unwind(2, "DW_EH_PE_pcrel  %lx -> %lx\n", new_start_loc, temp);
 		new_start_loc = temp;
 	}
 
-	if (m->is_dynamic) {
+	if (kunw_mod->is_dynamic) {
 		temp = new_start_loc + kunw_mod->elf_vma->vm_start;
 		dbug_unwind(2, "is_dynamic  %lx -> %lx\n", new_start_loc, temp);
 		new_start_loc = temp;
@@ -925,16 +924,15 @@ out:
 
 /* If we previously created an unwind header, then use it now to binary search */
 /* for the FDE corresponding to pc. */
-static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
-			    int is_ehframe, int user, int compat_task,
-			    struct kunwind_stp_module *kunw_mod)
+static u32 *_stp_search_fde(unsigned long pc, int is_ehframe, int user,
+		int compat_task, struct kunwind_module *kunw_mod)
 {
-	const u8 *ptr, *end, *hdr = m->ehf_hdr.kbuf;
-	uint32_t hdr_len = m->ehf_hdr.size;
+	const u8 *ptr, *end, *hdr = kunw_mod->ehf_hdr.kbuf;
+	uint32_t hdr_len = kunw_mod->ehf_hdr.size;
 	unsigned long start_loc, start_loc_adj;
 	u32 *fde = NULL;
 	unsigned num, table_size;
-	unsigned long eh_hdr_addr = m->ehf_hdr.offset;
+	unsigned long eh_hdr_addr = kunw_mod->ehf_hdr.offset;
 
 	if (hdr == NULL || hdr_len < 4 || hdr[0] != 1) {
 		_stp_warn("no or bad debug frame hdr\n");
@@ -972,8 +970,8 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 						 eh_hdr_addr, user, compat_task, table_size);
 		if ((hdr[1] & DW_EH_PE_ADJUST) == DW_EH_PE_pcrel)
 			eh = eh - (unsigned long)hdr + eh_hdr_addr;
-		if ((is_ehframe && eh != (unsigned long)m->ehf.offset)) {
-			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_offset = 0x%lx", eh, (unsigned long)m->ehf.offset);
+		if ((is_ehframe && eh != (unsigned long)kunw_mod->ehf.offset)) {
+			_stp_warn("eh_frame_ptr in eh_frame_hdr 0x%lx not valid; eh_frame_offset = 0x%lx", eh, (unsigned long)kunw_mod->ehf.offset);
 			return NULL;
 		}
 	}
@@ -989,8 +987,8 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 		const u8 *cur = ptr + (num / 2) * (2 * table_size);
 		start_loc = read_ptr_sect(&cur, cur + table_size, hdr[3], 0,
 					 eh_hdr_addr, user, compat_task, table_size);
-		start_loc_adj = adjust_start_loc(start_loc, m, hdr[3],
-					  is_ehframe, user, kunw_mod);
+		start_loc_adj = adjust_start_loc(start_loc, hdr[3], is_ehframe,
+						 user, kunw_mod);
 		if (!start_loc_adj) {
 			_stp_warn("error: bad adjusted_start_loc %lx -> %lx\n", start_loc, start_loc_adj);
 			return NULL;
@@ -1004,10 +1002,11 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 		}
 	} while (start_loc && num > 1);
 
+	// FIXME: reorganize this code
 	if (num == 1
 	    && (start_loc = adjust_start_loc(read_ptr_sect(&ptr, ptr + table_size, hdr[3], 0,
 							eh_hdr_addr, user, compat_task, table_size),
-					  m, hdr[3], is_ehframe, user, kunw_mod)) != 0 && pc >= start_loc) {
+					  hdr[3], is_ehframe, user, kunw_mod)) != 0 && pc >= start_loc) {
 		unsigned long off;
 		off = read_ptr_sect(&ptr, ptr + table_size, hdr[3],
 				    0, eh_hdr_addr, user, compat_task, table_size);
@@ -1016,9 +1015,9 @@ static u32 *_stp_search_fde(unsigned long pc, struct _stp_module *m,
 		   new eh_frame load address. For our own debug_hdr created
 		   table the fde is an offset into the debug_frame table. */
 		if (is_ehframe)
-			fde = (u32 *) (off - m->ehf.offset + m->ehf.kbuf);
+			fde = (u32 *) (off - kunw_mod->ehf.offset + kunw_mod->ehf.kbuf);
 		else
-			fde = (u32 *) (m->ehf.kbuf + off);
+			fde = (u32 *) (kunw_mod->ehf.kbuf + off);
 	}
 	dbug_unwind(1, "returning fde=%p start_loc=%lx\n", fde, start_loc);
 	return fde;
@@ -1446,11 +1445,9 @@ void dump_context(struct unwind_context *ctx)
  */
 static int
 __unwind_frame(struct unwind_context *context,
-	       struct kunwind_stp_module *kunw_mod,
+	       struct kunwind_module *kunw_mod,
 	       int compat_task)
 {
-	struct _stp_module *m;
-
 	void *table;
 	uint32_t table_size;
 	const int user = 1;
@@ -1472,9 +1469,8 @@ __unwind_frame(struct unwind_context *context,
 	unsigned long frame_size;
 	int ret;
 
-	m = &kunw_mod->stp_mod;
-	table = m->ehf.kbuf;
-	table_size = m->ehf.size;
+	table = kunw_mod->ehf.kbuf;
+	table_size = kunw_mod->ehf.size;
 
 	if (unlikely(table_size == 0)) {
 		// Don't _stp_warn about this, debug_frame and/or eh_frame
@@ -1498,7 +1494,7 @@ __unwind_frame(struct unwind_context *context,
 	printk("UNWIND step 1\n");
 	dump_context(context);
 
-	fde = _stp_search_fde(pc, m, is_ehframe, user, compat_task, kunw_mod);
+	fde = _stp_search_fde(pc, is_ehframe, user, compat_task, kunw_mod);
 
 	if (!fde || !check_fde(fde, table, table_size, is_ehframe)) {
 		_stp_warn("invalid fde=%lx\n", (unsigned long) fde);
@@ -1522,7 +1518,7 @@ __unwind_frame(struct unwind_context *context,
 		_stp_warn("error: parse_fde_cie returned %d\n", ret);
 		goto err;
 	}
-	startLoc = adjust_start_loc(startLoc, m, ptrType, is_ehframe, user, kunw_mod);
+	startLoc = adjust_start_loc(startLoc, ptrType, is_ehframe, user, kunw_mod);
 	if (!startLoc) {
 		_stp_warn("error: bad adjust_start_loc: %lx", startLoc);
 		goto err;
@@ -1776,7 +1772,7 @@ bottom:
 int unwind_frame(struct unwind_context *context, int user,
 		 struct kunwind_proc_modules *proc)
 {
-	struct kunwind_stp_module *mod = NULL;
+	struct kunwind_module *mod = NULL;
 	struct unwind_frame_info *frame = &context->info;
 	unsigned long pc = get_pc(frame);
         int res;

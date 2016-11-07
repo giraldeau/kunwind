@@ -20,7 +20,7 @@
  */
 static int init_kunwind_stp_module(struct task_struct *task,
 		struct load_info *linfo,
-		struct kunwind_stp_module *mod,
+		struct kunwind_module *mod,
 		struct kunwind_proc_modules *proc)
 {
 	int i;
@@ -28,8 +28,6 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	unsigned long npages;
 	struct page **pages;
 	unsigned long test;
-
-	memset(&mod->stp_mod, 0, sizeof(mod->stp_mod));
 
 	// Get vma for this module
 	// (executable phdr with eh_frame and eh_frame_hdr section)
@@ -67,24 +65,24 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	mod->npages = npages;
 
 	/* eh_frame_hdr */
-	mod->stp_mod.ehf_hdr.ubuf = (void *) linfo->eh_frame_hdr_ubuf;
-	mod->stp_mod.ehf_hdr.size = linfo->eh_frame_hdr_size;
-	mod->stp_mod.ehf_hdr.offset = linfo->eh_frame_hdr_ubuf - mod->elf_vma->vm_start;
-	mod->stp_mod.ehf_hdr.kbuf = mod->elf_vmap + mod->stp_mod.ehf_hdr.offset;
-	mod->stp_mod.is_dynamic = linfo->dynamic;
+	mod->ehf_hdr.ubuf = (void *) linfo->eh_frame_hdr_ubuf;
+	mod->ehf_hdr.size = linfo->eh_frame_hdr_size;
+	mod->ehf_hdr.offset = linfo->eh_frame_hdr_ubuf - mod->elf_vma->vm_start;
+	mod->ehf_hdr.kbuf = mod->elf_vmap + mod->ehf_hdr.offset;
+	mod->is_dynamic = linfo->dynamic;
 
 	/* eh_frame */
 	if (linfo->eh_frame_addr && linfo->eh_frame_size) {
 		/* the userspace provides eh_frame location */
-		mod->stp_mod.ehf.ubuf = (void *) linfo->eh_frame_addr;
-		mod->stp_mod.ehf.size = linfo->eh_frame_size;
-		mod->stp_mod.ehf.offset = linfo->eh_frame_addr - mod->elf_vma->vm_start;
-		mod->stp_mod.ehf.kbuf = mod->elf_vmap + mod->stp_mod.ehf.offset;
+		mod->ehf.ubuf = (void *) linfo->eh_frame_addr;
+		mod->ehf.size = linfo->eh_frame_size;
+		mod->ehf.offset = linfo->eh_frame_addr - mod->elf_vma->vm_start;
+		mod->ehf.kbuf = mod->elf_vmap + mod->ehf.offset;
 	} else {
 		/* find the eh_frame location ourselves */
 		res = eh_frame_from_hdr(mod->elf_vmap, mod->elf_vma->vm_start,
 				mod->elf_vma->vm_end, proc->compat,
-				&mod->stp_mod.ehf_hdr, &mod->stp_mod.ehf);
+				&mod->ehf_hdr, &mod->ehf);
 
 		dbug_unwind(1, "fill_eh_frame_info %d\n", res);
 		if (res)
@@ -96,7 +94,7 @@ static int init_kunwind_stp_module(struct task_struct *task,
 	res = get_user(test, (unsigned long *)linfo->eh_frame_hdr_ubuf);
 	if (res < 0)
 		goto out_vunmap;
-	if (test != *((unsigned long *) mod->stp_mod.ehf_hdr.kbuf)) {
+	if (test != *((unsigned long *) mod->ehf_hdr.kbuf)) {
 		WARN_ON_ONCE("Bad eh_frame virtual kernel address.");
 		goto out_vunmap;
 	}
@@ -116,7 +114,7 @@ out:
 	return res;
 }
 
-static void close_kunwind_stp_module(struct kunwind_stp_module *mod)
+static void close_kunwind_stp_module(struct kunwind_module *mod)
 {
 	int i;
 	dbug_unwind(1, "vunmap kernel addr: %p\n", mod->elf_vmap);
@@ -144,7 +142,7 @@ int init_proc_unwind_info(struct kunwind_proc_modules *mods,
 
 int release_unwind_info(struct kunwind_proc_modules *mods)
 {
-	struct kunwind_stp_module *mod, *other;
+	struct kunwind_module *mod, *other;
 	list_for_each_entry_safe(mod, other, &(mods->stp_modules), list) {
 		close_kunwind_stp_module(mod);
 		list_del(&(mod->list));
@@ -165,7 +163,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 	bool dynamic = false;
 	ElfW(Phdr) *phdr_arr = info->phdr;
 	int i, err = 0;
-	struct kunwind_stp_module *mod;
+	struct kunwind_module *mod;
 
 	for (i = 0; i < info->phnum; ++i) {
 		if (phdr_arr[i].p_type == PT_GNU_EH_FRAME) {
@@ -187,7 +185,7 @@ static int add_module(struct phdr_info *info, struct task_struct *task,
 	linfo.eh_frame_hdr_size = eh_phdr->p_memsz;
 	linfo.dynamic = dynamic;
 
-	mod = kmalloc(sizeof(struct kunwind_stp_module), GFP_KERNEL);
+	mod = kmalloc(sizeof(struct kunwind_module), GFP_KERNEL);
 	if (!mod)
 		return -ENOMEM;
 	err = init_kunwind_stp_module(task, &linfo, mod, mods);
@@ -214,8 +212,8 @@ int init_modules_from_proc_info(struct proc_info *pinfo,
 	int i, err;
 	for (i = 0; i < pinfo->nr_load_segments; ++i) {
 		struct load_info *linfo = &pinfo->load_segments[i];
-		struct kunwind_stp_module *mod =
-			kmalloc(sizeof(struct kunwind_stp_module),
+		struct kunwind_module *mod =
+			kmalloc(sizeof(struct kunwind_module),
 				GFP_KERNEL);
 		err = init_kunwind_stp_module(task, linfo, mod, mods);
 		if (err) {

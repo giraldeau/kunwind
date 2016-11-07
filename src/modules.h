@@ -11,16 +11,18 @@ struct kunwind_proc_modules {
 	int compat :1;
 };
 
-struct kunwind_stp_module {
-	struct _stp_module stp_mod;
+struct kunwind_module {
 	struct list_head list;
 	struct vm_area_struct *elf_vma;	/* ELF userspace vma */
 	void *elf_vmap;			/* ELF vmap in kernel */
 	struct page **pages;		/* ELF pages for kernel vmap */
 	int npages;
+	struct section ehf_hdr;		/* eh_frame_hdr */
+	struct section ehf;		/* eh_frame */
+	int is_dynamic;
 };
 
-int fill_mod_path(struct kunwind_stp_module *mod);
+int fill_mod_path(struct kunwind_module *mod);
 
 int init_proc_unwind_info(struct kunwind_proc_modules *mods,
 			  int compat);

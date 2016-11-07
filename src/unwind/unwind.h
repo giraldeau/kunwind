@@ -56,12 +56,6 @@ struct section {
 	uint32_t size;		/* buffer size in bytes */
 };
 
-struct _stp_module {
-	int is_dynamic;
-	struct section ehf_hdr;	/* eh_frame_hdr */
-	struct section ehf;	/* eh_frame */
-};
-
 /** Safely read from userspace or kernelspace.
  * On success, returns 0. Returns -EFAULT on error.
  *
