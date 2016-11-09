@@ -234,5 +234,6 @@ int do_current_unwind(struct kunwind_backtrace *bt,
 
 	memset(&context, 0, sizeof(context));
 	arch_unw_init_frame_info(&context.info, regs, 0);
+	arch_unw_init_frame_info(&context.stub, regs, 0);
 	return unwind_full(&context, mods, bt);
 }

@@ -36,27 +36,19 @@
 #define UNW_BP(frame)        (frame)->regs.rbp
 #endif /* STAPCONF_X86_UNIREGS */
 
-/* This cache structure comes from libunwind */
-typedef enum
-  {
-    UNW_X86_64_FRAME_STANDARD = -2,     /* regular rbp, rsp +/- offset */
-    UNW_X86_64_FRAME_SIGRETURN = -1,    /* special sigreturn frame */
-    UNW_X86_64_FRAME_OTHER = 0,         /* not cacheable (special or unrecognised) */
-    UNW_X86_64_FRAME_GUESSED = 1        /* guessed it was regular, but not known */
-  }
-unw_tdep_frame_type_t;
+struct tdep_item {
+	int where;
+	int reg;
+	long off;
+};
 
-typedef struct
-  {
-    u64 virtual_address;
-    u64 frame_type     : 2;  /* unw_tdep_frame_type_t classification */
-    u64 last_frame     : 1;  /* non-zero if last frame in chain */
-    u64 cfa_reg_rsp    : 1;  /* cfa dwarf base register is rsp vs. rbp */
-    u64 cfa_reg_offset : 30; /* cfa is at this offset from base register value */
-    u64 rbp_cfa_offset : 15; /* rbp saved at this offset from cfa (-1 = not saved) */
-    u64 rsp_cfa_offset : 15; /* rsp saved at this offset from cfa (-1 = not saved) */
-  }
-unw_tdep_frame_t;
+struct tdep_frame {
+	unsigned long pc;
+	struct tdep_item cfa;
+	struct tdep_item rbp;
+	struct tdep_item rsp;
+	int last;
+};
 
 /* Might need to account for the special exception and interrupt handling
    stacks here, since normally

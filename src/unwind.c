@@ -1413,16 +1413,21 @@ void dump_unwind_regs(struct unwind_item *regs, int len)
 }
 
 static void (*show_regs_fn)(struct pt_regs *, int all) = NULL;
+void dump_unwind_frame(struct unwind_frame_info *info)
+{
+	if (!show_regs_fn)
+		show_regs_fn = (void *) kallsyms_lookup_name("__show_regs");
+	if (show_regs_fn)
+		show_regs_fn(&info->regs, 0);
+}
+
 void dump_context(struct unwind_context *ctx)
 {
 	struct unwind_frame_info *info = &ctx->info;
 	struct unwind_state *state = &ctx->state;
 	int i;
 
-	if (!show_regs_fn)
-		show_regs_fn = (void *) kallsyms_lookup_name("__show_regs");
-	if (show_regs_fn)
-		show_regs_fn(&info->regs, 0);
+	dump_unwind_frame(info);
 
 	printk("unwind_state loc=%lx codeAlign=%lx dataAlign=%lx stackDepth=%x\n",
 			state->loc, state->codeAlign, state->dataAlign, state->stackDepth);
@@ -1490,6 +1495,91 @@ static int check_standard_frame(struct unwind_state *state,
 	return res;
 }
 
+void dump_tdep_frame(struct tdep_frame *f)
+{
+	dbug_unwind(3, "pc=0x%lx "
+			"cfa.where=%d cfa.reg=%x cfa.off=%ld "
+			"rbp.where=%d rbp.reg=%x rbp.off=%ld "
+			"rsp.where=%d rsp.reg=%x rsp.off=%ld\n",
+			f->pc,
+			f->cfa.where, f->cfa.reg, f->cfa.off,
+			f->rbp.where, f->rbp.reg, f->rbp.off,
+			f->rsp.where, f->rsp.reg, f->rsp.off);
+}
+
+void save_tdep_frame(struct tdep_item *dst, struct unwind_item *src)
+{
+	dst->where = src->where;
+	dst->reg = src->state.reg;
+	dst->off = src->state.off;
+}
+
+int restore_reg_from_memory(struct unwind_frame_info *frame, int reg,
+		unsigned long addr, int compat, int user)
+{
+	unsigned long value = 0;
+	mm_segment_t seg = user ? USER_DS : KERNEL_DS;
+
+	/*
+	 * We only want the lower half of the address defined, however
+	 * _stp_read_address will sometimes return garbage in the top half.
+	 * for 32-on-64 bit unwinding we need to ensure this is 0xFFFFFFFF
+	 */
+	if (_stp_read_address(value, (unsigned long *)addr, seg))
+		goto copy_failed;
+	if (compat)
+		value &= 0xFFFFFFFF;
+	FRAME_REG(reg, unsigned long) = value;
+	dbug_unwind(2, "addr=%lx -> reg=%d value=%lx\n", addr, reg, value);
+	return 0;
+
+copy_failed:
+	_stp_warn("_stp_read_address failed to access memory location %lx\n", addr);
+	return -1;
+}
+
+int apply_tdep_state(struct unwind_frame_info *frame,
+		struct unwind_state *state, struct tdep_frame *entry,
+		int compat, int user)
+{
+	unsigned long addr;
+	unsigned long cfa = FRAME_REG(entry->cfa.reg, unsigned long) + entry->cfa.off;
+	unsigned long cfa_ok = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
+
+	dbug_unwind(3, "check cfa=%lx cfa_ok=%lx\n", cfa, cfa_ok);
+
+	/* Restore rbp */
+	dbug_unwind(3, "restore rbp\n");
+	if (entry->rbp.where == Memory) {
+		addr = cfa + entry->rbp.off;
+		if (restore_reg_from_memory(frame, RBP, addr, compat, user))
+			goto err;
+	}
+
+	/* Restore rsp */
+	dbug_unwind(3, "restore rsp\n");
+	if (entry->rsp.where == Memory) {
+		addr = cfa + entry->rsp.off;
+		if (restore_reg_from_memory(frame, RSP, addr, compat, user))
+			goto err;
+	} else {
+		FRAME_REG(UNW_SP_IDX, unsigned long) = cfa;
+	}
+
+	/* Restore the instruction pointer */
+	dbug_unwind(3, "restore rip\n");
+	addr = cfa - 8; // address on the stack where the return address is saved
+	if (restore_reg_from_memory(frame, UNW_PC_IDX, addr, compat, user))
+		goto err;
+
+	dbug_unwind(3, "restored rip=%lx rbp=%lx rsp=%lx\n",
+			UNW_PC(frame), UNW_BP(frame), UNW_SP(frame));
+
+	return 0;
+
+err:
+	return -1;
+}
 
 /*
  * Unwind to previous frame.  Returns 0 if successful, negative
@@ -1511,6 +1601,7 @@ __unwind_frame(struct unwind_context *context,
 	/* The start and end of the FDE CFI instructions. */
 	const u8 *fdeStart = NULL, *fdeEnd = NULL;
 	struct unwind_frame_info *frame = &context->info;
+	struct unwind_frame_info *stub = &context->stub;
 	unsigned long pc = UNW_PC(frame) - frame->call_frame;
 	unsigned long startLoc = 0, endLoc = 0, locRange = 0, cfa;
 	unsigned i;
@@ -1518,6 +1609,7 @@ __unwind_frame(struct unwind_context *context,
 	uleb128_t retAddrReg = 0;
 	struct unwind_state *state = &context->state;
 	unsigned long addr;
+	unsigned long val;
 	unsigned long frame_size;
 	int ret;
 
@@ -1583,7 +1675,7 @@ __unwind_frame(struct unwind_context *context,
 	}
 
 	dbug_unwind(1, "cie=%lx fde=%lx startLoc=%lx endLoc=%lx, pc=%lx\n",
-                    (unsigned long) cie, (unsigned long)fde, (unsigned long) startLoc, (unsigned long) endLoc, pc);
+			(unsigned long) cie, (unsigned long)fde, (unsigned long) startLoc, (unsigned long) endLoc, pc);
 	if (cie == NULL)
 		goto err;
 
@@ -1615,12 +1707,37 @@ __unwind_frame(struct unwind_context *context,
 	if (!run_cfi_program(fdeStart, fdeEnd, pc, ptrType, user, state, compat_task)
 	    || state->loc > endLoc)
 		goto err;
+
+	ret = check_standard_frame(state, frame, retAddrReg);
+	if (ret) {
+		struct tdep_frame entry;
+		memset(&entry, 0, sizeof(entry));
+		entry.pc = pc;
+		entry.last = (REG_STATE.regs[retAddrReg].where == Nowhere);
+		entry.cfa.where = Register;
+		entry.cfa.reg = REG_STATE.cfa.reg;
+		entry.cfa.off = REG_STATE.cfa.off;
+
+		save_tdep_frame(&entry.rbp, &REG_STATE.regs[RBP]);
+		save_tdep_frame(&entry.rsp, &REG_STATE.regs[RSP]);
+		dump_tdep_frame(&entry);
+
+		if (apply_tdep_state(frame, state, &entry, compat_task, user))
+			goto slow_path;
+		if (entry.last)
+			goto bottom;
+		return 0;
+	}
+
+slow_path:
 	if (REG_STATE.regs[retAddrReg].where == Nowhere)
 		goto bottom;
 
 	/* DEBUG */
+	/*
 	dbug_unwind(3, "UNWIND step 2\n");
 	dump_context(context);
+	*/
 
 	/* update frame */
 	if (REG_STATE.cfa_is_expr) {
@@ -1638,11 +1755,6 @@ __unwind_frame(struct unwind_context *context,
 			    REG_STATE.cfa.reg, REG_STATE.cfa.off);
 		cfa = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
 	}
-
-	/* DEBUG */
-	dbug_unwind(3, "UNWIND step 3\n");
-	dump_context(context);
-	check_standard_frame(state, frame, retAddrReg);
 
 	/* Here, the CFA value is known */
 	frame_size = abs(cfa - UNW_SP(frame));
@@ -1681,7 +1793,7 @@ __unwind_frame(struct unwind_context *context,
 			switch (reg_info[REG_STATE.regs[i].state.reg].width) {
 #define CASE(n) \
 			case sizeof(u##n): \
-				REG_STATE.regs[i].state.reg = FRAME_REG(REG_STATE.regs[i].state.reg, \
+				REG_STATE.regs[i].state.val = FRAME_REG(REG_STATE.regs[i].state.reg, \
 				                                const u##n); \
 				break
 				CASES;
@@ -1739,7 +1851,7 @@ __unwind_frame(struct unwind_context *context,
 		case Register:
 			switch (reg_info[i].width) {
 #define CASE(n) case sizeof(u##n): \
-				FRAME_REG(i, u##n) = REG_STATE.regs[i].state.reg; \
+				FRAME_REG(i, u##n) = REG_STATE.regs[i].state.val; \
 				break
 				CASES;
 #undef CASE
@@ -1751,55 +1863,47 @@ __unwind_frame(struct unwind_context *context,
 		case Expr:
 			if (compute_expr(REG_STATE.regs[i].state.expr, frame, &addr, user, compat_task))
 				goto err;
-			goto memory;
+			addr = cfa + REG_STATE.regs[i].state.off;
+			restore_reg_from_memory(frame, i, addr, compat_task, user);
+			break;
 		case ValExpr:
 			if (compute_expr(REG_STATE.regs[i].state.expr, frame, &addr, user, compat_task))
 				goto err;
 			goto value;
 		case Value:
-			addr = cfa + REG_STATE.regs[i].state.off;
+			val = cfa + REG_STATE.regs[i].state.off;
 		value:
 			if (reg_info[i].width != sizeof(unsigned long)) {
 				_stp_warn("bad Register width for value state\n");
 				goto err;
 			}
-			FRAME_REG(i, unsigned long) = addr;
+			FRAME_REG(i, unsigned long) = val;
 			break;
 		case Memory:
 			addr = cfa + REG_STATE.regs[i].state.off;
-		memory:
-			dbug_unwind(2, "addr=%lx width=%d\n", addr, reg_info[i].width);
-			/* We only want the lower half of the address defined, however
-			   _stp_read_address will sometimes return garbage in the top half.
-			   for 32-on-64 bit unwinding we need to ensure this is 0xFFFFFFFF */
-			switch (reg_info[i].width) {
-#define CASE(n)     case sizeof(u##n):					\
-				if (unlikely(_stp_read_address(FRAME_REG(i, u##n), (u##n *)addr, \
-							       (user ? USER_DS : KERNEL_DS)))) \
-					goto copy_failed;		\
-				if (compat_task) FRAME_REG(i, u##n) &= 0xFFFFFFFF; \
-				dbug_unwind(1, "set register %d to %lx\n", i, (long)FRAME_REG(i,u##n)); \
-				break
-				CASES;
-#undef CASE
-			default:
-				_stp_warn("bad Register width\n");
-				goto err;
-			}
+			dbug_unwind(3, "restore from memory: cfa=%lx off=%ld addr=%lx\n", cfa, REG_STATE.regs[i].state.off, addr);
+			restore_reg_from_memory(frame, i, addr, compat_task, user);
 			break;
 		}
 	}
 
-	/* DEBUG */
-	dbug_unwind(3, "UNWIND step 4\n");
-	dump_context(context);
+	dbug_unwind(3, "CHECK_RIP: (%lx == %lx) = %d\n", UNW_PC(frame),
+			UNW_PC(stub), UNW_PC(frame) == UNW_PC(stub));
+
+	dbug_unwind(3, "CHECK_RSP: (%lx == %lx) = %d\n", UNW_SP(frame),
+				UNW_SP(stub), UNW_SP(frame) == UNW_SP(stub));
+
+	dbug_unwind(3, "CHECK_RBP: (%lx == %lx) = %d\n", UNW_BP(frame),
+				UNW_BP(stub), UNW_BP(frame) == UNW_BP(stub));
+
+	if (UNW_PC(frame) != UNW_PC(stub)
+		|| UNW_SP(frame) != UNW_SP(stub)
+		|| UNW_BP(frame) != UNW_BP(stub))
+		goto err;
 
 	dbug_unwind(1, "returning 0 (%llx)\n",
 		    (unsigned long long) UNW_PC(frame));
 	return 0;
-
-copy_failed:
-	_stp_warn("_stp_read_address failed to access memory location\n");
 err:
 	return -EIO;
 

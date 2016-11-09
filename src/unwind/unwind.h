@@ -387,6 +387,7 @@ struct unwind_item {
 	union {
 		uleb128_t reg;
 		sleb128_t off;
+		uleb128_t val;
 		const u8 *expr;
 	} state;
 };
@@ -414,6 +415,7 @@ struct unwind_state {
 
 struct unwind_context {
     struct unwind_frame_info info;
+    struct unwind_frame_info stub;
     struct unwind_state state;
 };
 
