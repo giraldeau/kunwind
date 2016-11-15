@@ -15,6 +15,138 @@
 #include "vma_file_path.h"
 #include "unwind/unwind.h"
 
+static void unw_cache_entry_rcu_free(struct rcu_head *rcu)
+{
+	struct unw_cache_entry *entry;
+
+	entry = container_of(rcu, struct unw_cache_entry, rcu);
+	kfree(entry);
+	dbug_unwind(3, "del cache_entry %p\n ", entry);
+}
+
+struct unw_cache_entry* unw_cache_find_entry(struct kunwind_proc_modules *mods,
+		struct unw_cache_key *key)
+{
+	int hash;
+	struct unw_cache_entry *entry;
+
+	hash = jhash(key, sizeof(*key), 0);
+	hash_for_each_possible_rcu(mods->unw_cache, entry, hlist, hash) {
+		if (key->pc == entry->frame.pc)
+			return entry;
+	}
+	return NULL;
+}
+
+void unw_cache_add_entry(struct kunwind_proc_modules *mods,
+		struct tdep_frame *frame)
+{
+	int hash;
+	struct unw_cache_entry *entry;
+	struct unw_cache_key key = {
+		.pc = frame->pc,
+	};
+
+	entry = unw_cache_find_entry(mods, &key);
+	if (entry) {
+		dbug_unwind(1, "entry already in cache (pc=0x%lx)\n", frame->pc);
+		return;
+	}
+
+	hash = jhash(&key, sizeof(key), 0);
+	entry = kzalloc(sizeof(struct unw_cache_entry), GFP_KERNEL);
+	if (entry) {
+		entry->frame = *frame;
+		hash_add_rcu(mods->unw_cache, &entry->hlist, hash);
+		dbug_unwind(3, "add cache_entry %p\n ", entry);
+	}
+}
+
+void unw_cache_del_entry(struct kunwind_proc_modules *mods,
+		struct unw_cache_key *key)
+{
+	struct unw_cache_entry *entry;
+
+	rcu_read_lock();
+	entry = unw_cache_find_entry(mods, key);
+	if (entry) {
+		hash_del_rcu(&entry->hlist);
+		call_rcu(&entry->rcu, unw_cache_entry_rcu_free);
+	}
+	rcu_read_unlock();
+}
+
+void unw_cache_clear(struct kunwind_proc_modules *mods)
+{
+	struct unw_cache_entry *entry;
+	int bkt;
+
+	rcu_read_lock();
+	hash_for_each_rcu(mods->unw_cache, bkt, entry, hlist) {
+		hash_del_rcu(&entry->hlist);
+		call_rcu(&entry->rcu, unw_cache_entry_rcu_free);
+	}
+	rcu_read_unlock();
+	synchronize_rcu();
+}
+
+#ifdef DEBUG_UNWIND
+void unw_cache_dump(struct kunwind_proc_modules *mods)
+{
+	struct unw_cache_entry *entry;
+	int bkt;
+
+	rcu_read_lock();
+	hash_for_each_rcu(mods->unw_cache, bkt, entry, hlist) {
+		dbug_unwind(3, "dump cache_entry %p\n ", entry);
+	}
+	rcu_read_unlock();
+}
+
+void unw_cache_test(struct kunwind_proc_modules *mods)
+{
+	struct unw_cache_entry *e;
+	struct tdep_frame frame = {
+		.pc = 0x1234,
+	};
+
+	struct unw_cache_key key = {
+		.pc = frame.pc,
+	};
+
+	dbug_unwind(3, "init\n");
+	unw_cache_dump(mods);
+
+	unw_cache_add_entry(mods, &frame);
+	dbug_unwind(3, "after add\n");
+	unw_cache_dump(mods);
+
+	rcu_read_lock();
+	e = unw_cache_find_entry(mods, &key);
+	dbug_unwind(3, "find_entry %p\n", e);
+	rcu_read_unlock();
+
+	unw_cache_clear(mods);
+	dbug_unwind(3, "after clear\n");
+	unw_cache_dump(mods);
+
+	rcu_read_lock();
+	e = unw_cache_find_entry(mods, &key);
+	dbug_unwind(3, "find_entry %p\n", e);
+	rcu_read_unlock();
+
+	dbug_unwind(3, "add and del\n");
+	unw_cache_add_entry(mods, &frame);
+	unw_cache_add_entry(mods, &frame);
+	unw_cache_dump(mods);
+	unw_cache_del_entry(mods, &key);
+	unw_cache_dump(mods);
+}
+#else
+void unw_cache_test(struct kunwind_proc_modules *mods) { }
+void unw_cache_dump(struct kunwind_proc_modules *mods) { }
+#endif
+
 /*
  * linfo must at least have eh_frame_hdr_addr and eh_frame_hdr_len
  */
@@ -148,6 +280,7 @@ int release_unwind_info(struct kunwind_proc_modules *mods)
 		list_del(&(mod->list));
 		kfree(mod);
 	}
+	unw_cache_clear(mods);
 	kfree(mods);
 	return 0;
 }

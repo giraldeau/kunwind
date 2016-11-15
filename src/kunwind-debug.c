@@ -7,6 +7,7 @@
 #include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
+#include <linux/hashtable.h>
 
 #include <proc_info.h>
 #include <kunwind.h>
@@ -23,7 +24,6 @@ static int kunwind_debug_open(struct inode *inode, struct file *file)
 	int compat;
 	struct kunwind_proc_modules *mods;
 
-
 	mods = kmalloc(sizeof(*mods), GFP_KERNEL);
 	if (!mods)
 		return -ENOMEM;
@@ -34,6 +34,10 @@ static int kunwind_debug_open(struct inode *inode, struct file *file)
 		kfree(mods);
 		return ret;
 	}
+	hash_init(mods->unw_cache);
+
+	unw_cache_test(mods);
+
 	file->private_data = mods;
 	return ret;
 }
