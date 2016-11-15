@@ -1561,18 +1561,11 @@ copy_failed:
 	return -1;
 }
 
-int apply_tdep_state(struct unwind_frame_info *frame,
-		struct unwind_state *state, struct tdep_frame *entry,
+int apply_tdep_state(struct unwind_frame_info *frame, struct tdep_frame *entry,
 		int compat, int user)
 {
 	unsigned long addr;
 	unsigned long cfa = FRAME_REG(entry->cfa.reg, unsigned long) + entry->cfa.off;
-	unsigned long cfa_ok = FRAME_REG(REG_STATE.cfa.reg, unsigned long) + REG_STATE.cfa.off;
-
-	if (cfa != cfa_ok) {
-		_stp_warn("assert failed: cfa=%lx cfa_ok=%lx\n", cfa, cfa_ok);
-		goto err;
-	}
 
 	/* Restore rbp */
 	dbug_unwind(3, "restore rbp\n");
@@ -1614,6 +1607,7 @@ err:
  */
 static int
 __unwind_frame(struct unwind_context *context,
+	       struct kunwind_proc_modules *mods,
 	       struct kunwind_module *kunw_mod,
 	       int compat_task)
 {
@@ -1634,6 +1628,8 @@ __unwind_frame(struct unwind_context *context,
 	signed ptrType = -1, call_frame = 1;
 	uleb128_t retAddrReg = 0;
 	struct unwind_state *state = &context->state;
+	struct unw_cache_entry *entry;
+	struct unw_cache_key key;
 	unsigned long addr;
 	unsigned long val;
 	unsigned long frame_size;
@@ -1650,6 +1646,17 @@ __unwind_frame(struct unwind_context *context,
 	if (unlikely(ehf->size & (sizeof(*fde) - 1))) {
 		_stp_warn("file %pD1: frame_len=%d", kunw_mod->elf_vma->vm_file, table_size);
 		goto err;
+	}
+
+	/* fast path FIXME: remove code duplication */
+	key.pc = pc;
+	entry = unw_cache_find_entry(mods, &key);
+	if (entry) {
+		if (apply_tdep_state(frame, &entry->frame, compat_task, user))
+			goto err;
+		if (entry->frame.last)
+			goto bottom;
+		return 0;
 	}
 
 	/* Sets all rules to default Same value. */
@@ -1748,7 +1755,8 @@ __unwind_frame(struct unwind_context *context,
 		save_tdep_frame(&entry.rsp, &REG_STATE.regs[RSP]);
 		dump_tdep_frame(&entry);
 
-		if (apply_tdep_state(frame, state, &entry, compat_task, user))
+		unw_cache_add_entry(mods, &entry);
+		if (apply_tdep_state(frame, &entry, compat_task, user))
 			goto slow_path;
 		if (entry.last)
 			goto bottom;
@@ -1972,7 +1980,7 @@ int unwind_frame(struct unwind_context *context, int user,
 	if (mod == NULL)
 		return -EINVAL;
 
-	res = __unwind_frame(context, mod, compat_task);
+	res = __unwind_frame(context, proc, mod, compat_task);
 
 	dbug_unwind (2, "unwind_frame returned: %d\n", res);
 	return res;
