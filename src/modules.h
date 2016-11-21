@@ -23,7 +23,7 @@ struct unw_cache_entry {
 struct kunwind_proc_modules {
 	struct list_head stp_modules;
 	DECLARE_HASHTABLE(unw_cache, UNW_CACHE_BITS);
-	int compat :1;
+	int compat;
 };
 
 struct kunwind_module {
@@ -52,7 +52,7 @@ int fill_mod_path(struct kunwind_module *mod);
 int init_proc_unwind_info(struct kunwind_proc_modules *mods,
 			  int compat);
 
-int release_unwind_info(struct kunwind_proc_modules *mods);
+void release_unwind_info(struct kunwind_proc_modules *mods);
 
 int init_modules_from_task(struct task_struct *task,
 			   struct kunwind_proc_modules *mods);

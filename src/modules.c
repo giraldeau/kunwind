@@ -266,23 +266,22 @@ int init_proc_unwind_info(struct kunwind_proc_modules *mods,
 	if (!mods)
 		return -EINVAL;
 	memset(mods, 0, sizeof(*mods));
-	INIT_LIST_HEAD(&(mods->stp_modules));
+	INIT_LIST_HEAD(&mods->stp_modules);
 	mods->compat = compat;
 
 	return 0;
 }
 
-int release_unwind_info(struct kunwind_proc_modules *mods)
+void release_unwind_info(struct kunwind_proc_modules *mods)
 {
 	struct kunwind_module *mod, *other;
-	list_for_each_entry_safe(mod, other, &(mods->stp_modules), list) {
+	list_for_each_entry_safe(mod, other, &mods->stp_modules, list) {
 		close_kunwind_stp_module(mod);
-		list_del(&(mod->list));
+		list_del(&mod->list);
 		kfree(mod);
 	}
 	unw_cache_clear(mods);
 	kfree(mods);
-	return 0;
 }
 
 // TODO generalize this function for compat tasks with Elf32 structures
@@ -362,6 +361,10 @@ int init_modules_from_proc_info(struct proc_info *pinfo,
 int do_current_unwind(struct kunwind_backtrace *bt,
 		      struct kunwind_proc_modules *mods)
 {
+	/*
+	 * FIXME: this structure is too large for the stack,
+	 * replace with kmalloc()
+	 */
 	struct unwind_context context;
 	struct pt_regs *regs = current_pt_regs();
 
