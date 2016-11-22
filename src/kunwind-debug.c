@@ -8,6 +8,7 @@
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
 #include <linux/hashtable.h>
+#include <linux/stacktrace.h>
 
 #include <proc_info.h>
 #include <kunwind.h>
@@ -59,6 +60,10 @@ void kunwind_process_register(struct kunwind_proc_modules *mods, pid_t tgid)
 	key.tgid = tgid;
 	hash = jhash(&key, sizeof(key), 0);
 
+	/*
+	 * FIXME: two threads could theoretically register at the same time.
+	 * Registration should be protected with a lock.
+	 */
 	rcu_read_lock();
 	val = kunwind_process_find(&key, hash);
 	if (val) {
@@ -227,6 +232,33 @@ out:
 	kfree(bt.entries);
 	dbug_unwind(1, "kunwind_backtrace_ioctl end %d\n", ret);
 	return ret;
+}
+
+void save_stack_trace_kunwind(struct stack_trace *trace)
+{
+	int ret;
+	int hash;
+	struct kunw_map_key key;
+	struct kunw_map_val *val;
+	struct kunwind_backtrace bt = {
+		.max_entries = trace->max_entries,
+		.nr_entries = trace->nr_entries,
+		.entries = (u64 *) trace->entries,
+	};
+
+	key.tgid = current->pid;
+	hash = jhash(&key, sizeof(key), 0);
+
+	rcu_read_lock();
+	val = kunwind_process_find(&key, hash);
+	if (!val) {
+		rcu_read_unlock();
+		dbug_unwind(1, "process not registered pid=%d\n", key.tgid);
+		return;
+	}
+	ret = do_current_unwind(&bt, val->mods);
+	rcu_read_unlock();
+	trace->nr_entries = bt.nr_entries;
 }
 
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
