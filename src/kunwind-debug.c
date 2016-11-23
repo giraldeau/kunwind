@@ -32,12 +32,6 @@ struct kunw_map_val {
 	struct rcu_head rcu;
 };
 
-static void kunwind_map_free_rcu(struct rcu_head *rcu)
-{
-	struct kunw_map_val *val = container_of(rcu, struct kunw_map_val, rcu);
-	release_unwind_info(val->mods);
-}
-
 static
 struct kunw_map_val* kunwind_process_find(struct kunw_map_key *key, u32 hash)
 {
@@ -90,7 +84,8 @@ void kunwind_process_unregister(pid_t tgid)
 	val = kunwind_process_find(&key, hash);
 	if (val) {
 		hash_del_rcu(&val->hlist);
-		call_rcu(&val->rcu, kunwind_map_free_rcu);
+		synchronize_rcu();
+		release_unwind_info(val->mods);
 	}
 	rcu_read_unlock();
 }
@@ -260,6 +255,7 @@ void save_stack_trace_kunwind(struct stack_trace *trace)
 	rcu_read_unlock();
 	trace->nr_entries = bt.nr_entries;
 }
+EXPORT_SYMBOL_GPL(save_stack_trace_kunwind);
 
 long kunwind_debug_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
